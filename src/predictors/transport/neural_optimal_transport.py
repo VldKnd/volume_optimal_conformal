@@ -226,13 +226,18 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
         jitter: float = 1e-6,
     ) -> torch.Tensor:
         """
-        External API for estimating log det D_2 phi_x(u).
+        Estimate log |det D_u T_x(u)| for the public pushforward map.
+
+        This includes both the scaled-coordinate determinant from
+        estimate_log_det_d2_phi and the final diagonal Jacobian contribution
+        from unscale_y.
         """
-        return self.estimate_log_det_d2_phi(
+        log_det = self.estimate_log_det_d2_phi(
             x=x,
             u=u,
             jitter=jitter,
         )
+        return log_det + self._unscale_y_log_det()
 
     @torch.enable_grad()
     def estimate_log_det_d2_phi(
@@ -354,6 +359,11 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
             torch.full_like(log_abs_det, torch.nan),
         )
         return log_det.detach()
+
+    def _unscale_y_log_det(self) -> torch.Tensor:
+        return 0.5 * torch.log(
+            self.y_scaler.running_var + self.y_scaler.eps
+        ).sum()
 
     @torch.enable_grad()
     def pullback(
