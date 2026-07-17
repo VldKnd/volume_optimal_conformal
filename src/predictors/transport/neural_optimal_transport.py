@@ -72,9 +72,8 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
 
     def unscale_y(self, y_scaled: torch.Tensor) -> torch.Tensor:
         return (
-            y_scaled
-            * torch.sqrt(self.y_scaler.running_var + self.y_scaler.eps)
-            + self.y_scaler.running_mean
+            y_scaled * torch.sqrt(self.y_scaler.running_var + self.y_scaler.eps) +
+            self.y_scaler.running_mean
         )
 
     @torch.enable_grad()
@@ -117,9 +116,7 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
         x = self.to_device(x)
         point = self.to_device(point)
 
-        inverse = torch.nn.Parameter(
-            point.detach().clone().contiguous()
-        )
+        inverse = torch.nn.Parameter(point.detach().clone().contiguous())
 
         optimizer = torch.optim.LBFGS(
             [inverse],
@@ -152,9 +149,7 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
             optimizer.step(closure)
 
         except (FloatingPointError, RuntimeError):
-            inverse = torch.nn.Parameter(
-                point.detach().clone().contiguous()
-            )
+            inverse = torch.nn.Parameter(point.detach().clone().contiguous())
 
             fallback = torch.optim.Adam([inverse], lr=1e-2)
 
@@ -194,8 +189,8 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
             raise ValueError("u must be provided when potential_type='u'.")
 
         return (
-            (y_scaled * u).sum(dim=-1, keepdim=True)
-            - self.potential_network(condition=x, tensor=u)
+            (y_scaled * u).sum(dim=-1, keepdim=True) -
+            self.potential_network(condition=x, tensor=u)
         )
 
     def estimate_phi(
@@ -214,8 +209,8 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
             raise ValueError("y_scaled must be provided when potential_type='y'.")
 
         return (
-            (y_scaled * u).sum(dim=-1, keepdim=True)
-            - self.potential_network(condition=x, tensor=y_scaled)
+            (y_scaled * u).sum(dim=-1, keepdim=True) -
+            self.potential_network(condition=x, tensor=y_scaled)
         )
 
     @torch.enable_grad()
@@ -224,6 +219,7 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
         x: torch.Tensor,
         u: torch.Tensor,
         jitter: float = 1e-6,
+        create_graph: bool | None = None,
     ) -> torch.Tensor:
         """
         Estimate log |det D_u T_x(u)| for the public pushforward map.
@@ -236,6 +232,7 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
             x=x,
             u=u,
             jitter=jitter,
+            create_graph=create_graph,
         )
         return log_det + self._unscale_y_log_det()
 
@@ -245,6 +242,7 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
         x: torch.Tensor,
         u: torch.Tensor,
         jitter: float = 1e-6,
+        create_graph: bool | None = None,
     ) -> torch.Tensor:
         """
         Estimate log det D_2 phi_x(u).
@@ -269,6 +267,9 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
 
         x = self.to_device(x)
         u = self.to_device(u)
+        if create_graph is None:
+            create_graph = u.requires_grad
+
         self._validate_condition_and_point_shapes(x=x, point=u)
 
         if self.potential_type == "y":
@@ -280,6 +281,7 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
             x=x,
             point=u,
             jitter=jitter,
+            create_graph=create_graph,
         )
 
     def _validate_condition_and_point_shapes(
@@ -296,9 +298,7 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
             )
 
         if x.shape[-1] != self.x_dim:
-            raise ValueError(
-                f"Expected x.shape[-1] = {self.x_dim}, got {x.shape[-1]}."
-            )
+            raise ValueError(f"Expected x.shape[-1] = {self.x_dim}, got {x.shape[-1]}.")
 
         if point.shape[-1] != self.y_dim:
             raise ValueError(
@@ -318,8 +318,11 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
         x: torch.Tensor,
         point: torch.Tensor,
         jitter: float,
+        create_graph: bool,
     ) -> torch.Tensor:
-        point = self.to_device(point).detach().clone().requires_grad_(True)
+        point = self.to_device(point)
+        if not point.requires_grad:
+            point = point.detach().clone().requires_grad_(True)
         x = self.to_device(x)
 
         potential = self.potential_network(
@@ -338,7 +341,8 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
             row = torch.autograd.grad(
                 grad[:, dim].sum(),
                 point,
-                retain_graph=dim < self.y_dim - 1,
+                create_graph=create_graph,
+                retain_graph=create_graph or dim < self.y_dim - 1,
             )[0]
             hessian_rows.append(row)
 
@@ -358,12 +362,13 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
             log_abs_det,
             torch.full_like(log_abs_det, torch.nan),
         )
+        if create_graph:
+            return log_det
+
         return log_det.detach()
 
     def _unscale_y_log_det(self) -> torch.Tensor:
-        return 0.5 * torch.log(
-            self.y_scaler.running_var + self.y_scaler.eps
-        ).sum()
+        return 0.5 * torch.log(self.y_scaler.running_var + self.y_scaler.eps).sum()
 
     @torch.enable_grad()
     def pullback(

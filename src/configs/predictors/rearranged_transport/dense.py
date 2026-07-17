@@ -1,0 +1,26 @@
+# src/configs/predictors/rearranged_transport/dense.py
+
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+
+class DenseRearrangedTransportPredictorConfig(BaseModel):
+    type: Literal["dense_rearranged_transport"] = "dense_rearranged_transport"
+
+    x_dim: int
+    y_dim: int
+
+    hidden_dimension: int = Field(default=64, gt=0)
+    number_of_hidden_layers: int = Field(default=2, ge=0)
+    time_dependent: bool = True
+
+    use_adjoint: bool = False
+    method: str = "rk4"
+    rtol: float = Field(default=1e-5, gt=0.0)
+    atol: float = Field(default=1e-6, gt=0.0)
+    number_of_steps: int | None = Field(default=16, gt=0)
+
+    seed: int = 0
+    device: str = "cpu"
+    dtype: str = "float32"

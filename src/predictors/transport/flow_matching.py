@@ -14,6 +14,7 @@ from networks.mlp_vector_field import MLPVectorField
 
 
 class FlowMatchingPredictor(nn.Module, BaseTransportPredictor):
+
     def __init__(self, config: FlowMatchingPredictorConfig):
         super().__init__()
 
@@ -68,6 +69,7 @@ class FlowMatchingPredictor(nn.Module, BaseTransportPredictor):
         self,
         velocity: torch.Tensor,
         state: torch.Tensor,
+        create_graph: bool = False,
     ) -> torch.Tensor:
         """
         Exact divergence:
@@ -86,14 +88,14 @@ class FlowMatchingPredictor(nn.Module, BaseTransportPredictor):
             grad_j = torch.autograd.grad(
                 velocity[:, j].sum(),
                 state,
-                create_graph=False,
-                retain_graph=(j + 1 < state.shape[1]),
+                create_graph=create_graph,
+                retain_graph=create_graph or (j + 1 < state.shape[1]),
             )[0][:, j]
 
             divergence = divergence + grad_j
 
         return divergence
-    
+
     def _sample_hutchinson_noise(
         self,
         state: torch.Tensor,
@@ -128,10 +130,7 @@ class FlowMatchingPredictor(nn.Module, BaseTransportPredictor):
                     shape,
                     device=state.device,
                     dtype=state.dtype,
-                )
-                .bernoulli_(0.5)
-                .mul_(2.0)
-                .sub_(1.0)
+                ).bernoulli_(0.5).mul_(2.0).sub_(1.0)
             )
 
         raise ValueError(
@@ -144,6 +143,7 @@ class FlowMatchingPredictor(nn.Module, BaseTransportPredictor):
         velocity: torch.Tensor,
         state: torch.Tensor,
         noise: torch.Tensor,
+        create_graph: bool = False,
     ) -> torch.Tensor:
         """
         Hutchinson estimator for
@@ -173,8 +173,8 @@ class FlowMatchingPredictor(nn.Module, BaseTransportPredictor):
                 outputs=velocity,
                 inputs=state,
                 grad_outputs=eps,
-                create_graph=False,
-                retain_graph=(k + 1 < num_probes),
+                create_graph=create_graph,
+                retain_graph=create_graph or (k + 1 < num_probes),
             )[0]
 
             estimate = (vjp * eps).sum(dim=1)
@@ -187,6 +187,7 @@ class FlowMatchingPredictor(nn.Module, BaseTransportPredictor):
         velocity: torch.Tensor,
         state: torch.Tensor,
         hutchinson_noise: torch.Tensor | None = None,
+        create_graph: bool = False,
     ) -> torch.Tensor:
         """
         Chooses exact trace or Hutchinson trace estimator depending on config.
@@ -202,13 +203,15 @@ class FlowMatchingPredictor(nn.Module, BaseTransportPredictor):
                 velocity=velocity,
                 state=state,
                 noise=hutchinson_noise,
+                create_graph=create_graph,
             )
 
         return self._exact_divergence(
             velocity=velocity,
             state=state,
+            create_graph=create_graph,
         )
-    
+
     @torch.no_grad()
     def warmup_y_scaler(self, dataloader) -> None:
         self.y_scaler.train()
@@ -224,9 +227,8 @@ class FlowMatchingPredictor(nn.Module, BaseTransportPredictor):
 
     def unscale_y(self, y_scaled: torch.Tensor) -> torch.Tensor:
         return (
-            y_scaled
-            * torch.sqrt(self.y_scaler.running_var + self.y_scaler.eps)
-            + self.y_scaler.running_mean
+            y_scaled * torch.sqrt(self.y_scaler.running_var + self.y_scaler.eps) +
+            self.y_scaler.running_mean
         )
 
     def predict_vector_field(
@@ -298,7 +300,7 @@ class FlowMatchingPredictor(nn.Module, BaseTransportPredictor):
         state = trajectory[-1]
 
         return self.unscale_y(state).detach()
-    
+
     @torch.no_grad()
     def pushforward_with_log_det(
         self,
@@ -389,24 +391,93 @@ class FlowMatchingPredictor(nn.Module, BaseTransportPredictor):
         #   log |det D unscale_y|
         #       = sum_j log sqrt(running_var_j + eps)
         #       = 0.5 * sum_j log(running_var_j + eps)
-        scaler_log_det = 0.5 * torch.log(
-            self.y_scaler.running_var + self.y_scaler.eps
-        ).sum()
+        scaler_log_det = 0.5 * torch.log(self.y_scaler.running_var +
+                                         self.y_scaler.eps).sum()
 
         log_det = log_det + scaler_log_det
 
         y = self.unscale_y(state)
 
         return y.detach(), log_det.detach()
-    
-    def log_det(self, 
-            x: torch.Tensor,
-            u: torch.Tensor,
-            ode_steps: int | None = None,
-        ) -> torch.Tensor:
-        _, log_det = self.pushforward_with_log_det(x=x, u=u, ode_steps=ode_steps)
-        return log_det
 
+    @torch.enable_grad()
+    def _differentiable_pushforward_with_log_det(
+        self,
+        x: torch.Tensor,
+        u: torch.Tensor,
+        ode_steps: int | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        self.eval()
+
+        x = self.to_device(x)
+        state = self.to_device(u)
+
+        steps = self.config.ode_steps if ode_steps is None else ode_steps
+        time_span = self._ode_time_span()
+
+        log_det = torch.zeros(
+            state.shape[0],
+            device=self.device,
+            dtype=self.dtype,
+        )
+
+        hutchinson_noise = None
+        if self.use_hutchinson_trace_estimator:
+            hutchinson_noise = self._sample_hutchinson_noise(state)
+
+        def augmented_dynamics(
+            t_scalar: torch.Tensor,
+            augmented_state: tuple[torch.Tensor, torch.Tensor],
+        ) -> tuple[torch.Tensor, torch.Tensor]:
+            state, log_det = augmented_state
+
+            t = self._make_time_batch(
+                t=t_scalar,
+                batch_size=state.shape[0],
+            )
+
+            state = state.requires_grad_(True)
+            velocity = self.vector_field(
+                state=state,
+                x=x,
+                t=t,
+            )
+            divergence = self._divergence(
+                velocity=velocity,
+                state=state,
+                hutchinson_noise=hutchinson_noise,
+                create_graph=True,
+            )
+
+            return velocity, divergence
+
+        state_trajectory, log_det_trajectory = odeint(
+            augmented_dynamics,
+            (state, log_det),
+            time_span,
+            method="rk4",
+            options={"step_size": 1.0 / steps},
+        )
+
+        state = state_trajectory[-1]
+        log_det = log_det_trajectory[-1]
+        scaler_log_det = 0.5 * torch.log(self.y_scaler.running_var +
+                                         self.y_scaler.eps).sum()
+
+        return self.unscale_y(state), log_det + scaler_log_det
+
+    def log_det(
+        self,
+        x: torch.Tensor,
+        u: torch.Tensor,
+        ode_steps: int | None = None,
+    ) -> torch.Tensor:
+        _, log_det = self._differentiable_pushforward_with_log_det(
+            x=x,
+            u=u,
+            ode_steps=ode_steps,
+        )
+        return log_det
 
     @torch.no_grad()
     def pullback(
@@ -498,9 +569,9 @@ class FlowMatchingPredictor(nn.Module, BaseTransportPredictor):
         )
 
         x_rep = (
-            x[:, None, :]
-            .expand(batch_size, n_samples, self.x_dim)
-            .reshape(batch_size * n_samples, self.x_dim)
+            x[:,
+              None, :].expand(batch_size, n_samples,
+                              self.x_dim).reshape(batch_size * n_samples, self.x_dim)
         )
 
         u_flat = u.reshape(batch_size * n_samples, self.y_dim)
