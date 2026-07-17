@@ -17,3 +17,6 @@ class BaseTransportPredictor(BasePredictor):
 
     def multivariate_score(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         return self.pullback(x, y)
+    
+    def log_det(self, *args, **kwargs) -> torch.Tensor:
+        raise RuntimeError("Log det is not implemented for this module.")

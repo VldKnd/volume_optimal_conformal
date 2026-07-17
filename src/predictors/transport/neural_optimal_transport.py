@@ -219,6 +219,143 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
         )
 
     @torch.enable_grad()
+    def log_det(
+        self,
+        x: torch.Tensor,
+        u: torch.Tensor,
+        jitter: float = 1e-6,
+    ) -> torch.Tensor:
+        """
+        External API for estimating log det D_2 phi_x(u).
+        """
+        return self.estimate_log_det_d2_phi(
+            x=x,
+            u=u,
+            jitter=jitter,
+        )
+
+    @torch.enable_grad()
+    def estimate_log_det_d2_phi(
+        self,
+        x: torch.Tensor,
+        u: torch.Tensor,
+        jitter: float = 1e-6,
+    ) -> torch.Tensor:
+        """
+        Estimate log det D_2 phi_x(u).
+
+        This is only implemented when potential_type='u', where phi_x is
+        represented directly by the potential network. The determinant is
+        computed in the model's scaled target coordinates.
+
+        Args:
+            x: (batch, x_dim)
+            u: (batch, y_dim)
+            jitter: non-negative diagonal jitter added before taking the
+                determinant.
+
+        Returns:
+            log_det: (batch,)
+        """
+        if jitter < 0.0:
+            raise ValueError(f"jitter must be non-negative, got {jitter}.")
+
+        self.eval()
+
+        x = self.to_device(x)
+        u = self.to_device(u)
+        self._validate_condition_and_point_shapes(x=x, point=u)
+
+        if self.potential_type == "y":
+            raise NotImplementedError(
+                "log det estimate for the y potential is not implemented."
+            )
+
+        return self._potential_hessian_log_det(
+            x=x,
+            point=u,
+            jitter=jitter,
+        )
+
+    def _validate_condition_and_point_shapes(
+        self,
+        x: torch.Tensor,
+        point: torch.Tensor,
+    ) -> None:
+        if x.ndim != 2:
+            raise ValueError(f"Expected x to be 2D, got shape {tuple(x.shape)}.")
+
+        if point.ndim != 2:
+            raise ValueError(
+                f"Expected point to be 2D, got shape {tuple(point.shape)}."
+            )
+
+        if x.shape[-1] != self.x_dim:
+            raise ValueError(
+                f"Expected x.shape[-1] = {self.x_dim}, got {x.shape[-1]}."
+            )
+
+        if point.shape[-1] != self.y_dim:
+            raise ValueError(
+                f"Expected point.shape[-1] = {self.y_dim}, "
+                f"got {point.shape[-1]}."
+            )
+
+        if x.shape[0] != point.shape[0]:
+            raise ValueError(
+                f"Expected x.shape[0] == point.shape[0], got "
+                f"{x.shape[0]} and {point.shape[0]}."
+            )
+
+    @torch.enable_grad()
+    def _potential_hessian_log_det(
+        self,
+        x: torch.Tensor,
+        point: torch.Tensor,
+        jitter: float,
+    ) -> torch.Tensor:
+        point = self.to_device(point).detach().clone().requires_grad_(True)
+        x = self.to_device(x)
+
+        potential = self.potential_network(
+            condition=x,
+            tensor=point,
+        ).sum()
+
+        grad = torch.autograd.grad(
+            potential,
+            point,
+            create_graph=True,
+        )[0]
+
+        hessian_rows = []
+        for dim in range(self.y_dim):
+            row = torch.autograd.grad(
+                grad[:, dim].sum(),
+                point,
+                retain_graph=dim < self.y_dim - 1,
+            )[0]
+            hessian_rows.append(row)
+
+        hessian = torch.stack(hessian_rows, dim=1)
+        hessian = 0.5 * (hessian + hessian.transpose(-1, -2))
+
+        eye = torch.eye(
+            self.y_dim,
+            device=hessian.device,
+            dtype=hessian.dtype,
+        )
+        hessian = hessian + jitter * eye.unsqueeze(0)
+
+        sign, log_abs_det = torch.linalg.slogdet(hessian)
+        log_det = torch.where(
+            sign > 0,
+            log_abs_det,
+            torch.full_like(log_abs_det, torch.nan),
+        )
+        return log_det.detach()
+
+    @torch.enable_grad()
     def pullback(
         self,
         x: torch.Tensor,
