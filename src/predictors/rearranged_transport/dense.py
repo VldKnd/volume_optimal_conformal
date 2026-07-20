@@ -8,6 +8,9 @@ import torch.nn as nn
 from configs.predictors.rearranged_transport.dense import (
     DenseRearrangedTransportPredictorConfig,
 )
+from networks.experimental_dense_skew_vector_field import (
+    DenseGaussianSkewVectorField as ExperimentalDenseGaussianSkewVectorField,
+)
 from networks.measure_preserving_flows.flow_integration import (
     GaussianSkewFieldFlow,
 )
@@ -49,9 +52,11 @@ class DenseRearrangedTransportPredictor(
         self._validate_transport_predictor()
         self._move_transport_predictor_to_device()
 
+        vector_field = self._make_rearrangement_vector_field()
         self.rearrangement_flow = GaussianSkewFieldFlow(
             dimension=config.y_dim,
             context_dimension=config.x_dim,
+            vector_field=vector_field,
             use_adjoint=config.use_adjoint,
             method=config.method,
             rtol=config.rtol,
@@ -62,6 +67,24 @@ class DenseRearrangedTransportPredictor(
             number_of_hidden_layers=config.number_of_hidden_layers,
             time_dependent=config.time_dependent,
         ).to(device=self.device, dtype=self.dtype)
+
+    def _make_rearrangement_vector_field(self) -> nn.Module | None:
+        if self.config.vector_field_implementation == "standard":
+            return None
+
+        if self.config.vector_field_implementation == "experimental":
+            return ExperimentalDenseGaussianSkewVectorField(
+                dimension=self.config.y_dim,
+                context_dimension=self.config.x_dim,
+                hidden_dimension=self.config.hidden_dimension,
+                number_of_hidden_layers=self.config.number_of_hidden_layers,
+                time_dependent=self.config.time_dependent,
+            )
+
+        raise ValueError(
+            "Unknown vector_field_implementation="
+            f"{self.config.vector_field_implementation!r}."
+        )
 
     def _validate_transport_predictor(self) -> None:
         predictor_x_dim = getattr(self.transport_predictor, "x_dim", None)
