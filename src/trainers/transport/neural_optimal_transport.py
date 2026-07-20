@@ -10,7 +10,7 @@ from predictors.transport.neural_optimal_transport import NeuralOptimalTransport
 from trainers.base import BaseTrainer
 
 
-class NeuralQuantileTrainer(BaseTrainer):
+class NeuralOptimalTransportTrainer(BaseTrainer):
     def __init__(self, config: NeuralOptimalTransportTrainerConfig):
         self.config = config
         self.training_history: list[dict] = []
