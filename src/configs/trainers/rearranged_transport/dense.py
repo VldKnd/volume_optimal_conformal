@@ -16,3 +16,9 @@ class DenseRearrangedTransportTrainerConfig(BaseModel):
 
     use_cosine_scheduler: bool = True
     verbose: bool = True
+
+
+class SupervisedDenseRearrangedTransportTrainerConfig(
+    DenseRearrangedTransportTrainerConfig
+):
+    pass

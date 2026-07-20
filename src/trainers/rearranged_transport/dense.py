@@ -223,3 +223,157 @@ class DenseRearrangedTransportTrainer(BaseTrainer):
         dimension: int,
     ) -> float:
         return float(chi.ppf(alpha, df=dimension))
+
+
+class SupervisedDenseRearrangedTransportTrainer(DenseRearrangedTransportTrainer):
+    """
+    Dense rearrangement trainer using observed target samples for support.
+
+    Each y from the dataloader is pulled back through the wrapped transport and
+    then through the current rearrangement flow without gradient tracking. The
+    resulting latent point is accepted only if it lies inside the chi-radius
+    ball specified by config.alpha. Accepted points use the same log-volume loss
+    as DenseRearrangedTransportTrainer.
+    """
+
+    def fit(
+        self,
+        predictor: DenseRearrangedTransportPredictor,
+        dataloader: torch.utils.data.DataLoader,
+        transport_trainer: BaseTrainer | None = None,
+    ) -> DenseRearrangedTransportPredictor:
+        if dataloader is None:
+            raise ValueError(
+                "dataloader must be provided to train supervised dense "
+                "rearranged transport."
+            )
+
+        self._fit_transport_map_if_requested(
+            predictor=predictor,
+            dataloader=dataloader,
+            transport_trainer=transport_trainer,
+        )
+
+        predictor.transport_predictor.eval()
+        predictor.rearrangement_flow.train()
+
+        radius = self._ball_radius(
+            alpha=self.config.alpha,
+            dimension=predictor.y_dim,
+        )
+
+        optimizer = torch.optim.AdamW(
+            predictor.rearrangement_flow.parameters(),
+            lr=self.config.learning_rate,
+            weight_decay=self.config.weight_decay,
+        )
+
+        scheduler = None
+        if self.config.use_cosine_scheduler:
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer,
+                T_max=self.config.epochs * len(dataloader),
+            )
+
+        progress = trange(
+            self.config.epochs,
+            disable=not self.config.verbose,
+            desc="Supervised Dense Rearranged Transport",
+        )
+
+        for epoch in progress:
+            start = time.perf_counter()
+            epoch_losses: list[float] = []
+            accepted_samples = 0
+            seen_samples = 0
+
+            for batch in dataloader:
+                x_batch, y_batch = self._extract_xy_batch(batch)
+                x_batch = predictor.to_device(x_batch)
+                y_batch = predictor.to_device(y_batch)
+
+                with torch.no_grad():
+                    transport_u = predictor.transport_pullback(
+                        x=x_batch,
+                        y=y_batch,
+                    )
+                    u = predictor.rearrangement_pullback(
+                        x=x_batch,
+                        u=transport_u,
+                    )
+                    inside_ball = u.norm(dim=-1) <= radius
+                    seen_samples += int(inside_ball.numel())
+                    accepted_samples += int(inside_ball.sum().item())
+
+                    if not inside_ball.any():
+                        continue
+
+                    x = x_batch[inside_ball].detach()
+                    u = u[inside_ball].detach()
+
+                loss = self.estimate_log_volume(
+                    predictor=predictor,
+                    x=x,
+                    u=u,
+                )
+
+                if not torch.isfinite(loss):
+                    raise FloatingPointError(
+                        "Non-finite supervised dense rearranged transport loss."
+                    )
+
+                optimizer.zero_grad()
+                loss.backward()
+
+                torch.nn.utils.clip_grad_norm_(
+                    predictor.rearrangement_flow.parameters(),
+                    max_norm=self.config.grad_clip_norm,
+                )
+
+                optimizer.step()
+
+                if scheduler is not None:
+                    scheduler.step()
+
+                epoch_losses.append(float(loss.detach().cpu()))
+
+            if not epoch_losses:
+                raise RuntimeError(
+                    "No dataloader samples were accepted inside the latent ball. "
+                    "Increase config.alpha or use a larger batch/dataset."
+                )
+
+            epoch_loss = float(torch.tensor(epoch_losses).mean())
+            acceptance_rate = accepted_samples / max(seen_samples, 1)
+
+            self.training_history.append(
+                {
+                    "epoch": epoch + 1,
+                    "log_volume_loss": epoch_loss,
+                    "radius": radius,
+                    "alpha": self.config.alpha,
+                    "accepted_samples": accepted_samples,
+                    "seen_samples": seen_samples,
+                    "acceptance_rate": acceptance_rate,
+                    "training_time": time.perf_counter() - start,
+                    "learning_rate": optimizer.param_groups[0]["lr"],
+                }
+            )
+
+            if self.config.verbose:
+                progress.set_description(
+                    f"Epoch {epoch + 1} | Log-volume {epoch_loss:.4f} "
+                    f"| Accepted {acceptance_rate:.2%}"
+                )
+
+        predictor.eval()
+        return predictor
+
+    def _extract_xy_batch(self, batch) -> tuple[torch.Tensor, torch.Tensor]:
+        if isinstance(batch, (tuple, list)) and len(batch) >= 2:
+            return batch[0], batch[1]
+
+        raise ValueError(
+            "Expected dataloader batches to be non-empty tuple/list pairs "
+            "(x_batch, y_batch)."
+        )
