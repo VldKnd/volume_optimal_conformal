@@ -3,9 +3,8 @@ name = "minimal-volume-vector-quantile-regression"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11, <3.12"
 dependencies = [
-    "cartopy>=0.24.1",
     "cvxpy>=1.7.1",
     "geomloss>=0.2.6",
     "ipykernel>=6.29.5",
@@ -15,8 +14,6 @@ dependencies = [
     "numpy>=2.3.1",
     "pot>=0.9.5",
     "pydantic>=2.11.7",
-    "pyqt5>=5.15.11",
-    "pyqt6>=6.9.1",
     "scikit-learn>=1.7.0",
     "scipy>=1.16.0",
     "torch>=2.7.1",
