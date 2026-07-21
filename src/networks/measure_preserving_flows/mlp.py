@@ -10,6 +10,7 @@ ActivationName = Literal[
     "elu",
     "gelu",
     "leaky_relu",
+    "prelu",
     "relu",
     "silu",
     "softplus",
@@ -17,7 +18,25 @@ ActivationName = Literal[
 ]
 
 
-def make_activation(activation: ActivationName) -> nn.Module:
+class PReLU(nn.Module):
+    """Power ReLU: ``(1 / p) * ReLU(x) ** p``."""
+
+    def __init__(self, p: float = 2.0):
+        super().__init__()
+
+        if p <= 0.0:
+            raise ValueError(f"p must be positive, got {p}.")
+
+        self.p = float(p)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return torch.relu(x).pow(self.p) / self.p
+
+
+def make_activation(
+    activation: ActivationName,
+    activation_power: float = 2.0,
+) -> nn.Module:
     if activation == "elu":
         return nn.ELU()
 
@@ -26,6 +45,9 @@ def make_activation(activation: ActivationName) -> nn.Module:
 
     if activation == "leaky_relu":
         return nn.LeakyReLU()
+
+    if activation == "prelu":
+        return PReLU(p=activation_power)
 
     if activation == "relu":
         return nn.ReLU()
@@ -41,8 +63,8 @@ def make_activation(activation: ActivationName) -> nn.Module:
 
     raise ValueError(
         f"Unknown activation={activation!r}. "
-        "Expected one of 'elu', 'gelu', 'leaky_relu', 'relu', 'silu', "
-        "'softplus', or 'tanh'."
+        "Expected one of 'elu', 'gelu', 'leaky_relu', 'prelu', 'relu', "
+        "'silu', 'softplus', or 'tanh'."
     )
 
 
@@ -60,6 +82,7 @@ class MeasurePreservingMLP(nn.Module):
         output_dim: int | None = None,
         time_dim: int = 1,
         activation: ActivationName = "softplus",
+        activation_power: float = 2.0,
     ):
         super().__init__()
 
@@ -69,18 +92,19 @@ class MeasurePreservingMLP(nn.Module):
         self.output_dim = y_dim if output_dim is None else output_dim
         self.time_dim = time_dim
         self.activation = activation
+        self.activation_power = float(activation_power)
 
         input_dim = x_dim + self.state_dim + time_dim
 
         layers: list[nn.Module] = [
             nn.Linear(input_dim, hidden_dim),
-            make_activation(activation),
+            make_activation(activation, activation_power=activation_power),
         ]
 
         for _ in range(num_hidden_layers):
             layers.extend([
                 nn.Linear(hidden_dim, hidden_dim),
-                make_activation(activation),
+                make_activation(activation, activation_power=activation_power),
             ])
 
         layers.append(nn.Linear(hidden_dim, self.output_dim))

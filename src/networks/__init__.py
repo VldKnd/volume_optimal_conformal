@@ -3,6 +3,7 @@ from networks.experimental_dense_skew_vector_field import (
 )
 from networks.measure_preserving_flows import (
     MeasurePreservingMLP,
+    PReLU,
     SparseGaussianSkewVectorField,
 )
 from networks.mlp_vector_field import MLPVectorField
@@ -15,6 +16,7 @@ __all__ = [
     "FrozenStandardScaler",
     "MeasurePreservingMLP",
     "MLPVectorField",
+    "PReLU",
     "PICNN",
     "PISCNN",
     "PosLinear",

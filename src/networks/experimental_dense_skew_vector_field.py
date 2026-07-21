@@ -27,6 +27,7 @@ class DenseGaussianSkewVectorField(nn.Module):
         context_dimension: int = 0,
         time_dependent: bool = True,
         activation: ActivationName = "softplus",
+        activation_power: float = 2.0,
     ):
         super().__init__()
 
@@ -36,6 +37,7 @@ class DenseGaussianSkewVectorField(nn.Module):
         self.number_of_hidden_layers = number_of_hidden_layers
         self.time_dependent = time_dependent
         self.activation = activation
+        self.activation_power = float(activation_power)
 
         skew_matrix_indexes_i, skew_matrix_indexes_j = torch.triu_indices(
             dimension,
@@ -63,6 +65,7 @@ class DenseGaussianSkewVectorField(nn.Module):
             hidden_dim=hidden_dimension,
             num_hidden_layers=number_of_hidden_layers,
             activation=activation,
+            activation_power=activation_power,
         )
 
     def _check_integrated_variable(self, u: torch.Tensor) -> None:

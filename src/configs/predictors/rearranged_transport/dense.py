@@ -26,11 +26,13 @@ class RearrangedTransportPredictorConfig(BaseModel):
         "elu",
         "gelu",
         "leaky_relu",
+        "prelu",
         "relu",
         "silu",
         "softplus",
         "tanh",
     ] = "softplus"
+    activation_power: float = Field(default=2.0, gt=0.0)
 
     use_adjoint: bool = False
     method: str = "rk4"

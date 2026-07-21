@@ -8,6 +8,7 @@ from networks.measure_preserving_flows.flow_integration import (
 from networks.measure_preserving_flows.mlp import (
     ActivationName,
     MeasurePreservingMLP,
+    PReLU,
     make_activation,
 )
 from networks.measure_preserving_flows.sparse_skew_symmetric_vector_field import (
@@ -19,6 +20,7 @@ __all__ = [
     "DenseGaussianSkewVectorField",
     "GaussianSkewFieldFlow",
     "MeasurePreservingMLP",
+    "PReLU",
     "SparseGaussianSkewVectorField",
     "VectorFieldFlow",
     "make_activation",
