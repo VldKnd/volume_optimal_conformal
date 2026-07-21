@@ -347,21 +347,18 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
             hessian_rows.append(row)
 
         hessian = torch.stack(hessian_rows, dim=1)
-        hessian = 0.5 * (hessian + hessian.transpose(-1, -2))
-
-        eye = torch.eye(
-            self.y_dim,
-            device=hessian.device,
-            dtype=hessian.dtype,
+        cholesky_factor, _ = torch.linalg.cholesky_ex(
+            hessian,
+            check_errors=False,
         )
-        hessian = hessian + jitter * eye.unsqueeze(0)
 
-        sign, log_abs_det = torch.linalg.slogdet(hessian)
-        log_det = torch.where(
-            sign > 0,
-            log_abs_det,
-            torch.full_like(log_abs_det, torch.nan),
+        diagonal = cholesky_factor.diagonal(
+            dim1=-2,
+            dim2=-1,
         )
+
+        log_det = 2.0 * torch.log(diagonal).sum(dim=-1)
+
         if create_graph:
             return log_det
 
