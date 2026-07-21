@@ -14,6 +14,9 @@ from networks.experimental_dense_skew_vector_field import (
 from networks.measure_preserving_flows.flow_integration import (
     GaussianSkewFieldFlow,
 )
+from networks.measure_preserving_flows.sparse_skew_symmetric_vector_field import (
+    SparseGaussianSkewVectorField,
+)
 from predictors.rearranged_transport.base import (
     BaseRearrangedTransportPredictor,
 )
@@ -74,6 +77,15 @@ class DenseRearrangedTransportPredictor(
 
         if self.config.vector_field_implementation == "experimental":
             return ExperimentalDenseGaussianSkewVectorField(
+                dimension=self.config.y_dim,
+                context_dimension=self.config.x_dim,
+                hidden_dimension=self.config.hidden_dimension,
+                number_of_hidden_layers=self.config.number_of_hidden_layers,
+                time_dependent=self.config.time_dependent,
+            )
+
+        if self.config.vector_field_implementation == "sparse":
+            return SparseGaussianSkewVectorField(
                 dimension=self.config.y_dim,
                 context_dimension=self.config.x_dim,
                 hidden_dimension=self.config.hidden_dimension,
