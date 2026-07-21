@@ -5,8 +5,11 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-class DenseRearrangedTransportPredictorConfig(BaseModel):
-    type: Literal["dense_rearranged_transport"] = "dense_rearranged_transport"
+class RearrangedTransportPredictorConfig(BaseModel):
+    type: Literal[
+        "rearranged_transport",
+        "dense_rearranged_transport",
+    ] = "rearranged_transport"
 
     x_dim: int
     y_dim: int
@@ -29,3 +32,6 @@ class DenseRearrangedTransportPredictorConfig(BaseModel):
     seed: int = 0
     device: str = "cpu"
     dtype: str = "float32"
+
+
+DenseRearrangedTransportPredictorConfig = RearrangedTransportPredictorConfig

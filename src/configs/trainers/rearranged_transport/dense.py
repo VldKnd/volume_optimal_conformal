@@ -3,7 +3,7 @@
 from pydantic import BaseModel, Field
 
 
-class DenseRearrangedTransportTrainerConfig(BaseModel):
+class RearrangedTransportTrainerConfig(BaseModel):
     epochs: int = Field(default=100, gt=0)
 
     alpha: float = Field(default=0.9, gt=0.0, lt=1.0)
@@ -18,7 +18,13 @@ class DenseRearrangedTransportTrainerConfig(BaseModel):
     verbose: bool = True
 
 
-class SupervisedDenseRearrangedTransportTrainerConfig(
-    DenseRearrangedTransportTrainerConfig
+class SupervisedRearrangedTransportTrainerConfig(
+    RearrangedTransportTrainerConfig
 ):
     pass
+
+
+DenseRearrangedTransportTrainerConfig = RearrangedTransportTrainerConfig
+SupervisedDenseRearrangedTransportTrainerConfig = (
+    SupervisedRearrangedTransportTrainerConfig
+)

@@ -7,7 +7,7 @@ import torch.nn as nn
 from pydantic import BaseModel
 
 from configs.predictors.rearranged_transport import (
-    DenseRearrangedTransportPredictorConfig,
+    RearrangedTransportPredictorConfig,
 )
 from configs.predictors.transport import (
     FlowMatchingPredictorConfig,
@@ -35,7 +35,7 @@ PredictorConfig = (
     | NeuralOptimalTransportPredictorConfig
     | NeuralSplineFlowPredictorConfig
     | NormalizingFlowPredictorConfig
-    | DenseRearrangedTransportPredictorConfig
+    | RearrangedTransportPredictorConfig
 )
 
 _CONFIG_BY_TYPE = {
@@ -43,7 +43,8 @@ _CONFIG_BY_TYPE = {
     "neural_optimal_transport": NeuralOptimalTransportPredictorConfig,
     "neural_spline_flow": NeuralSplineFlowPredictorConfig,
     "normalizing_flow": NormalizingFlowPredictorConfig,
-    "dense_rearranged_transport": DenseRearrangedTransportPredictorConfig,
+    "rearranged_transport": RearrangedTransportPredictorConfig,
+    "dense_rearranged_transport": RearrangedTransportPredictorConfig,
 }
 
 _PREDICTOR_BY_CONFIG_TYPE = {
@@ -73,14 +74,14 @@ def count_trainable_parameters_from_config(
     Configs are copied to CPU before instantiation, so this utility can count a
     CUDA-configured predictor on a CPU-only machine.
 
-    ``DenseRearrangedTransportPredictorConfig`` does not contain the wrapped
-    transport predictor. For that config, this function counts the rearrangement
-    flow parameters. If ``transport_predictor_config`` is supplied, its trainable
+    ``RearrangedTransportPredictorConfig`` does not contain the wrapped transport
+    predictor. For that config, this function counts the rearrangement flow
+    parameters. If ``transport_predictor_config`` is supplied, its trainable
     parameters are added as the wrapped transport contribution.
     """
     parsed_config = _parse_predictor_config(config)
 
-    if isinstance(parsed_config, DenseRearrangedTransportPredictorConfig):
+    if isinstance(parsed_config, RearrangedTransportPredictorConfig):
         count = count_trainable_parameters(
             _build_rearrangement_flow_from_config(parsed_config)
         )
@@ -137,7 +138,7 @@ def _build_transport_predictor_from_config(
 
 
 def _build_rearrangement_flow_from_config(
-    config: DenseRearrangedTransportPredictorConfig,
+    config: RearrangedTransportPredictorConfig,
 ) -> nn.Module:
     cpu_config = _copy_config_to_cpu(config)
 

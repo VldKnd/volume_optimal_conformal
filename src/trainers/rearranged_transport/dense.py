@@ -8,32 +8,32 @@ from scipy.stats import chi
 from tqdm import trange
 
 from configs.trainers.rearranged_transport.dense import (
-    DenseRearrangedTransportTrainerConfig,
+    RearrangedTransportTrainerConfig,
 )
 from predictors.rearranged_transport.dense import (
-    DenseRearrangedTransportPredictor,
+    RearrangedTransportPredictor,
 )
 from trainers.base import BaseTrainer
 
 
-class DenseRearrangedTransportTrainer(BaseTrainer):
+class RearrangedTransportTrainer(BaseTrainer):
 
     def __init__(
         self,
-        config: DenseRearrangedTransportTrainerConfig,
+        config: RearrangedTransportTrainerConfig,
     ):
         self.config = config
         self.training_history: list[dict] = []
 
     def fit(
         self,
-        predictor: DenseRearrangedTransportPredictor,
+        predictor: RearrangedTransportPredictor,
         dataloader: torch.utils.data.DataLoader,
         transport_trainer: BaseTrainer | None = None,
-    ) -> DenseRearrangedTransportPredictor:
+    ) -> RearrangedTransportPredictor:
         if dataloader is None:
             raise ValueError(
-                "dataloader must be provided to train dense rearranged transport."
+                "dataloader must be provided to train rearranged transport."
             )
 
         self._fit_transport_map_if_requested(
@@ -66,7 +66,7 @@ class DenseRearrangedTransportTrainer(BaseTrainer):
         progress = trange(
             self.config.epochs,
             disable=not self.config.verbose,
-            desc="Dense Rearranged Transport",
+            desc="Rearranged Transport",
         )
 
         for epoch in progress:
@@ -92,11 +92,12 @@ class DenseRearrangedTransportTrainer(BaseTrainer):
                     predictor=predictor,
                     x=x,
                     u=u,
+                    mc_samples_per_x=self.config.mc_samples_per_x,
                 )
 
                 if not torch.isfinite(loss):
                     raise FloatingPointError(
-                        "Non-finite dense rearranged transport loss."
+                        "Non-finite rearranged transport loss."
                     )
 
                 optimizer.zero_grad()
@@ -138,20 +139,47 @@ class DenseRearrangedTransportTrainer(BaseTrainer):
 
     def estimate_log_volume(
         self,
-        predictor: DenseRearrangedTransportPredictor,
+        predictor: RearrangedTransportPredictor,
         x: torch.Tensor,
         u: torch.Tensor,
+        mc_samples_per_x: int = 1,
     ) -> torch.Tensor:
         weights = predictor.log_det(
             x=x,
             u=u,
         )
 
-        return torch.logsumexp(weights, dim=0) - math.log(weights.numel())
+        return self._grouped_log_mean_exp(
+            weights=weights,
+            mc_samples_per_x=mc_samples_per_x,
+        ).mean()
+
+    def _grouped_log_mean_exp(
+        self,
+        weights: torch.Tensor,
+        mc_samples_per_x: int,
+    ) -> torch.Tensor:
+        if mc_samples_per_x < 1:
+            raise ValueError("mc_samples_per_x must be positive.")
+
+        if weights.ndim != 1:
+            weights = weights.reshape(-1)
+
+        if weights.numel() % mc_samples_per_x != 0:
+            raise ValueError(
+                "Number of log-det weights must be divisible by "
+                f"mc_samples_per_x={mc_samples_per_x}, got {weights.numel()}."
+            )
+
+        grouped_weights = weights.reshape(-1, mc_samples_per_x)
+        return (
+            torch.logsumexp(grouped_weights, dim=1) -
+            math.log(mc_samples_per_x)
+        )
 
     def _fit_transport_map_if_requested(
         self,
-        predictor: DenseRearrangedTransportPredictor,
+        predictor: RearrangedTransportPredictor,
         dataloader: torch.utils.data.DataLoader | None,
         transport_trainer: BaseTrainer | None,
     ) -> None:
@@ -225,26 +253,26 @@ class DenseRearrangedTransportTrainer(BaseTrainer):
         return float(chi.ppf(alpha, df=dimension))
 
 
-class SupervisedDenseRearrangedTransportTrainer(DenseRearrangedTransportTrainer):
+class SupervisedRearrangedTransportTrainer(RearrangedTransportTrainer):
     """
-    Dense rearrangement trainer using observed target samples for support.
+    Rearranged transport trainer using observed target samples for support.
 
     Each y from the dataloader is pulled back through the wrapped transport and
     then through the current rearrangement flow without gradient tracking. The
     resulting latent point is accepted only if it lies inside the chi-radius
     ball specified by config.alpha. Accepted points use the same log-volume loss
-    as DenseRearrangedTransportTrainer.
+    as RearrangedTransportTrainer.
     """
 
     def fit(
         self,
-        predictor: DenseRearrangedTransportPredictor,
+        predictor: RearrangedTransportPredictor,
         dataloader: torch.utils.data.DataLoader,
         transport_trainer: BaseTrainer | None = None,
-    ) -> DenseRearrangedTransportPredictor:
+    ) -> RearrangedTransportPredictor:
         if dataloader is None:
             raise ValueError(
-                "dataloader must be provided to train supervised dense "
+                "dataloader must be provided to train supervised "
                 "rearranged transport."
             )
 
@@ -278,7 +306,7 @@ class SupervisedDenseRearrangedTransportTrainer(DenseRearrangedTransportTrainer)
         progress = trange(
             self.config.epochs,
             disable=not self.config.verbose,
-            desc="Supervised Dense Rearranged Transport",
+            desc="Supervised Rearranged Transport",
         )
 
         for epoch in progress:
@@ -319,7 +347,7 @@ class SupervisedDenseRearrangedTransportTrainer(DenseRearrangedTransportTrainer)
 
                 if not torch.isfinite(loss):
                     raise FloatingPointError(
-                        "Non-finite supervised dense rearranged transport loss."
+                        "Non-finite supervised rearranged transport loss."
                     )
 
                 optimizer.zero_grad()
@@ -377,3 +405,7 @@ class SupervisedDenseRearrangedTransportTrainer(DenseRearrangedTransportTrainer)
             "Expected dataloader batches to be non-empty tuple/list pairs "
             "(x_batch, y_batch)."
         )
+
+
+DenseRearrangedTransportTrainer = RearrangedTransportTrainer
+SupervisedDenseRearrangedTransportTrainer = SupervisedRearrangedTransportTrainer

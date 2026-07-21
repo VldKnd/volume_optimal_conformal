@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 
 from configs.predictors.rearranged_transport.dense import (
-    DenseRearrangedTransportPredictorConfig,
+    RearrangedTransportPredictorConfig,
 )
 from networks.experimental_dense_skew_vector_field import (
     DenseGaussianSkewVectorField as ExperimentalDenseGaussianSkewVectorField,
@@ -23,20 +23,20 @@ from predictors.rearranged_transport.base import (
 from predictors.transport.base import BaseTransportPredictor
 
 
-class DenseRearrangedTransportPredictor(
+class RearrangedTransportPredictor(
     nn.Module,
     BaseRearrangedTransportPredictor,
 ):
     """
     Rearranged transport T o S.
 
-    S is a conditional Gaussian-preserving dense skew flow in latent space.
+    S is a conditional Gaussian-preserving flow in latent space.
     T is an already-trained transport predictor supplied by the caller.
     """
 
     def __init__(
         self,
-        config: DenseRearrangedTransportPredictorConfig,
+        config: RearrangedTransportPredictorConfig,
         transport_predictor: BaseTransportPredictor,
     ):
         super().__init__()
@@ -232,3 +232,6 @@ class DenseRearrangedTransportPredictor(
         y: torch.Tensor,
     ) -> torch.Tensor:
         return self.pullback(x=x, y=y)
+
+
+DenseRearrangedTransportPredictor = RearrangedTransportPredictor
