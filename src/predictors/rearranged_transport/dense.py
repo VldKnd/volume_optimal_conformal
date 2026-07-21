@@ -69,6 +69,7 @@ class RearrangedTransportPredictor(
             hidden_dimension=config.hidden_dimension,
             number_of_hidden_layers=config.number_of_hidden_layers,
             time_dependent=config.time_dependent,
+            activation=config.activation,
         ).to(device=self.device, dtype=self.dtype)
 
     def _make_rearrangement_vector_field(self) -> nn.Module | None:
@@ -82,6 +83,7 @@ class RearrangedTransportPredictor(
                 hidden_dimension=self.config.hidden_dimension,
                 number_of_hidden_layers=self.config.number_of_hidden_layers,
                 time_dependent=self.config.time_dependent,
+                activation=self.config.activation,
             )
 
         if self.config.vector_field_implementation == "sparse":
@@ -91,6 +93,7 @@ class RearrangedTransportPredictor(
                 hidden_dimension=self.config.hidden_dimension,
                 number_of_hidden_layers=self.config.number_of_hidden_layers,
                 time_dependent=self.config.time_dependent,
+                activation=self.config.activation,
             )
 
         raise ValueError(

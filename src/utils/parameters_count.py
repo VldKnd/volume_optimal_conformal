@@ -150,6 +150,7 @@ def _build_rearrangement_flow_from_config(
             hidden_dimension=cpu_config.hidden_dimension,
             number_of_hidden_layers=cpu_config.number_of_hidden_layers,
             time_dependent=cpu_config.time_dependent,
+            activation=cpu_config.activation,
         )
 
     if cpu_config.vector_field_implementation == "sparse":
@@ -159,6 +160,7 @@ def _build_rearrangement_flow_from_config(
             hidden_dimension=cpu_config.hidden_dimension,
             number_of_hidden_layers=cpu_config.number_of_hidden_layers,
             time_dependent=cpu_config.time_dependent,
+            activation=cpu_config.activation,
         )
 
     return GaussianSkewFieldFlow(
@@ -174,4 +176,5 @@ def _build_rearrangement_flow_from_config(
         hidden_dimension=cpu_config.hidden_dimension,
         number_of_hidden_layers=cpu_config.number_of_hidden_layers,
         time_dependent=cpu_config.time_dependent,
+        activation=cpu_config.activation,
     )

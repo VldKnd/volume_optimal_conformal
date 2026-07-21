@@ -22,6 +22,15 @@ class RearrangedTransportPredictorConfig(BaseModel):
         "experimental",
         "sparse",
     ] = "standard"
+    activation: Literal[
+        "elu",
+        "gelu",
+        "leaky_relu",
+        "relu",
+        "silu",
+        "softplus",
+        "tanh",
+    ] = "softplus"
 
     use_adjoint: bool = False
     method: str = "rk4"

@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from networks.mlp_vector_field import MLPVectorField
+from networks.measure_preserving_flows.mlp import ActivationName, MeasurePreservingMLP
 
 
 class DenseGaussianSkewVectorField(nn.Module):
@@ -20,6 +20,7 @@ class DenseGaussianSkewVectorField(nn.Module):
         number_of_hidden_layers: int = 2,
         context_dimension: int = 0,
         time_dependent: bool = True,
+        activation: ActivationName = "softplus",
     ):
         super().__init__()
 
@@ -28,6 +29,7 @@ class DenseGaussianSkewVectorField(nn.Module):
         self.hidden_dimension = hidden_dimension
         self.number_of_hidden_layers = number_of_hidden_layers
         self.time_dependent = time_dependent
+        self.activation = activation
 
         skew_matrix_indexes_i, skew_matrix_indexes_j = torch.triu_indices(
             dimension,
@@ -46,7 +48,7 @@ class DenseGaussianSkewVectorField(nn.Module):
             skew_matrix_flat_indexes,
         )
 
-        self.network = MLPVectorField(
+        self.network = MeasurePreservingMLP(
             x_dim=context_dimension,
             y_dim=dimension,
             state_dim=dimension,
@@ -54,6 +56,7 @@ class DenseGaussianSkewVectorField(nn.Module):
             time_dim=int(time_dependent),
             hidden_dim=hidden_dimension,
             num_hidden_layers=number_of_hidden_layers,
+            activation=activation,
         )
 
     def _check_integrated_variable(self, u: torch.Tensor) -> None:
