@@ -219,7 +219,7 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
         self,
         x: torch.Tensor,
         u: torch.Tensor,
-        jitter: float = 1e-6,
+        jitter: float = 1e-4,
         create_graph: bool | None = None,
     ) -> torch.Tensor:
         """

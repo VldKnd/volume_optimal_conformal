@@ -1,4 +1,4 @@
-from configs.predictors.rearranged_transport.dense import (
+from configs.predictors.rearranged_transport.rearranged_transport import (
     DenseRearrangedTransportPredictorConfig,
     RearrangedTransportPredictorConfig,
 )

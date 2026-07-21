@@ -15,9 +15,6 @@ from configs.predictors.transport import (
     NeuralSplineFlowPredictorConfig,
     NormalizingFlowPredictorConfig,
 )
-from networks.experimental_dense_skew_vector_field import (
-    DenseGaussianSkewVectorField as ExperimentalDenseGaussianSkewVectorField,
-)
 from networks.measure_preserving_flows import GaussianSkewFieldFlow
 from networks.measure_preserving_flows.sparse_skew_symmetric_vector_field import (
     SparseGaussianSkewVectorField,
@@ -28,7 +25,6 @@ from predictors.transport import (
     NeuralSplineFlowPredictor,
     NormalizingFlowPredictor,
 )
-
 
 PredictorConfig = (
     FlowMatchingPredictorConfig
@@ -143,17 +139,6 @@ def _build_rearrangement_flow_from_config(
     cpu_config = _copy_config_to_cpu(config)
 
     vector_field = None
-    if cpu_config.vector_field_implementation == "experimental":
-        vector_field = ExperimentalDenseGaussianSkewVectorField(
-            dimension=cpu_config.y_dim,
-            context_dimension=cpu_config.x_dim,
-            hidden_dimension=cpu_config.hidden_dimension,
-            number_of_hidden_layers=cpu_config.number_of_hidden_layers,
-            time_dependent=cpu_config.time_dependent,
-            activation=cpu_config.activation,
-            activation_power=cpu_config.activation_power,
-        )
-
     if cpu_config.vector_field_implementation == "sparse":
         vector_field = SparseGaussianSkewVectorField(
             dimension=cpu_config.y_dim,
