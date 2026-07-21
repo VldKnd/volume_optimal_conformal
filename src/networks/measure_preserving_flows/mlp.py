@@ -97,17 +97,17 @@ class MeasurePreservingMLP(nn.Module):
         input_dim = x_dim + self.state_dim + time_dim
 
         layers: list[nn.Module] = [
-            spectral_norm(nn.Linear(input_dim, hidden_dim)),
+            nn.Linear(input_dim, hidden_dim),
             make_activation(activation, activation_power=activation_power),
         ]
 
         for _ in range(num_hidden_layers):
             layers.extend([
-                spectral_norm(nn.Linear(hidden_dim, hidden_dim)),
+                nn.Linear(hidden_dim, hidden_dim),
                 make_activation(activation, activation_power=activation_power),
             ])
 
-        output_layer = spectral_norm(nn.Linear(hidden_dim, self.output_dim))
+        output_layer = nn.Linear(hidden_dim, self.output_dim)
         nn.init.zeros_(output_layer.weight)
         nn.init.zeros_(output_layer.bias)
         layers.append(output_layer)
