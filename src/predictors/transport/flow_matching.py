@@ -11,6 +11,7 @@ from torchdiffeq import odeint
 from configs.predictors.transport.flow_matching import FlowMatchingPredictorConfig
 from predictors.transport.base import BaseTransportPredictor
 from networks.mlp_vector_field import MLPVectorField
+from networks.standard_scaler import FrozenStandardScaler
 
 
 class FlowMatchingPredictor(nn.Module, BaseTransportPredictor):
@@ -34,10 +35,10 @@ class FlowMatchingPredictor(nn.Module, BaseTransportPredictor):
             num_hidden_layers=config.num_hidden_layers,
         ).to(device=self.device, dtype=self.dtype)
 
-        self.y_scaler = nn.BatchNorm1d(
-            config.y_dim,
-            affine=False,
-        ).to(device=self.device, dtype=self.dtype)
+        self.y_scaler = FrozenStandardScaler(config.y_dim).to(
+            device=self.device,
+            dtype=self.dtype,
+        )
 
         self.use_hutchinson_trace_estimator = config.use_hutchinson_trace_estimator
         self.hutchinson_num_samples = config.hutchinson_num_samples
@@ -214,11 +215,11 @@ class FlowMatchingPredictor(nn.Module, BaseTransportPredictor):
 
     @torch.no_grad()
     def warmup_y_scaler(self, dataloader) -> None:
-        self.y_scaler.train()
+        self.y_scaler.reset_running_stats()
 
         for _, y_batch in dataloader:
             y_batch = self.to_device(y_batch)
-            _ = self.y_scaler(y_batch)
+            self.y_scaler.update(y_batch)
 
         self.y_scaler.eval()
 

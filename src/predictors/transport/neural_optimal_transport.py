@@ -12,6 +12,7 @@ from configs.predictors.transport.neural_optimal_transport import (
 )
 from predictors.transport.base import BaseTransportPredictor
 from networks.picnn import PISCNN
+from networks.standard_scaler import FrozenStandardScaler
 
 
 class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
@@ -49,21 +50,21 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
             number_of_hidden_layers=config.num_hidden_layers,
         ).to(device=self.device, dtype=self.dtype)
 
-        self.y_scaler = nn.BatchNorm1d(
-            config.y_dim,
-            affine=False,
-        ).to(device=self.device, dtype=self.dtype)
+        self.y_scaler = FrozenStandardScaler(config.y_dim).to(
+            device=self.device,
+            dtype=self.dtype,
+        )
 
     def to_device(self, tensor: torch.Tensor) -> torch.Tensor:
         return tensor.to(device=self.device, dtype=self.dtype)
 
     @torch.no_grad()
     def warmup_y_scaler(self, dataloader) -> None:
-        self.y_scaler.train()
+        self.y_scaler.reset_running_stats()
 
         for _, y_batch in dataloader:
             y_batch = self.to_device(y_batch)
-            _ = self.y_scaler(y_batch)
+            self.y_scaler.update(y_batch)
 
         self.y_scaler.eval()
 
@@ -347,15 +348,42 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
             hessian_rows.append(row)
 
         hessian = torch.stack(hessian_rows, dim=1)
-        cholesky_factor, _ = torch.linalg.cholesky_ex(
+        hessian = 0.5 * (hessian + hessian.transpose(-2, -1))
+
+        if jitter > 0.0:
+            identity = torch.eye(
+                self.y_dim,
+                device=hessian.device,
+                dtype=hessian.dtype,
+            )
+            hessian = hessian + jitter * identity
+
+        cholesky_factor, cholesky_info = torch.linalg.cholesky_ex(
             hessian,
             check_errors=False,
         )
+
+        if (cholesky_info > 0).any():
+            failed_indexes = torch.nonzero(
+                cholesky_info > 0,
+                as_tuple=False,
+            ).flatten()[:5].detach().cpu().tolist()
+            raise RuntimeError(
+                "Failed to compute Neural OT log-det: Hessian is not positive "
+                f"definite after adding jitter={jitter}. "
+                f"Failed batch indexes include {failed_indexes}."
+            )
 
         diagonal = cholesky_factor.diagonal(
             dim1=-2,
             dim2=-1,
         )
+
+        if not torch.isfinite(diagonal).all() or (diagonal <= 0.0).any():
+            raise RuntimeError(
+                "Failed to compute Neural OT log-det: Cholesky diagonal "
+                "contains non-positive or non-finite values."
+            )
 
         log_det = 2.0 * torch.log(diagonal).sum(dim=-1)
 

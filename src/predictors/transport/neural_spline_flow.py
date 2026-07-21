@@ -13,6 +13,7 @@ from configs.predictors.transport.neural_spline_flow import (
     NeuralSplineFlowPredictorConfig,
 )
 from predictors.transport.base import BaseTransportPredictor
+from networks.standard_scaler import FrozenStandardScaler
 
 
 def _build_mlp(
@@ -356,10 +357,10 @@ class NeuralSplineFlowPredictor(nn.Module, BaseTransportPredictor):
             ]
         ).to(device=self.device, dtype=self.dtype)
 
-        self.y_scaler = nn.BatchNorm1d(
-            config.y_dim,
-            affine=False,
-        ).to(device=self.device, dtype=self.dtype)
+        self.y_scaler = FrozenStandardScaler(config.y_dim).to(
+            device=self.device,
+            dtype=self.dtype,
+        )
 
     def _validate_config(
         self,
@@ -384,11 +385,11 @@ class NeuralSplineFlowPredictor(nn.Module, BaseTransportPredictor):
 
     @torch.no_grad()
     def warmup_y_scaler(self, dataloader) -> None:
-        self.y_scaler.train()
+        self.y_scaler.reset_running_stats()
 
         for _, y_batch in dataloader:
             y_batch = self.to_device(y_batch)
-            _ = self.y_scaler(y_batch)
+            self.y_scaler.update(y_batch)
 
         self.y_scaler.eval()
 
