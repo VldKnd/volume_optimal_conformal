@@ -27,13 +27,13 @@ class MLPVectorField(nn.Module):
 
         layers: list[nn.Module] = [
             nn.Linear(input_dim, hidden_dim),
-            nn.SiLU(),
+            nn.Softplus(),
         ]
 
         for _ in range(num_hidden_layers):
             layers.extend([
                 nn.Linear(hidden_dim, hidden_dim),
-                nn.SiLU(),
+                nn.Softplus(),
             ])
 
         layers.append(nn.Linear(hidden_dim, self.output_dim))
