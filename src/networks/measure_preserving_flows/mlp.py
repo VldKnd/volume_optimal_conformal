@@ -4,7 +4,7 @@ from typing import Literal
 
 import torch
 import torch.nn as nn
-
+from torch.nn.utils.parametrizations import spectral_norm
 
 ActivationName = Literal[
     "elu",
@@ -97,13 +97,13 @@ class MeasurePreservingMLP(nn.Module):
         input_dim = x_dim + self.state_dim + time_dim
 
         layers: list[nn.Module] = [
-            nn.Linear(input_dim, hidden_dim),
+            spectral_norm(nn.Linear(input_dim, hidden_dim)),
             make_activation(activation, activation_power=activation_power),
         ]
 
         for _ in range(num_hidden_layers):
             layers.extend([
-                nn.Linear(hidden_dim, hidden_dim),
+                spectral_norm(nn.Linear(hidden_dim, hidden_dim)),
                 make_activation(activation, activation_power=activation_power),
             ])
 
