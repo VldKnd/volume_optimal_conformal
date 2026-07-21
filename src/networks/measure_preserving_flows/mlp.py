@@ -107,7 +107,10 @@ class MeasurePreservingMLP(nn.Module):
                 make_activation(activation, activation_power=activation_power),
             ])
 
-        layers.append(nn.Linear(hidden_dim, self.output_dim))
+        output_layer = nn.Linear(hidden_dim, self.output_dim)
+        nn.init.zeros_(output_layer.weight)
+        nn.init.zeros_(output_layer.bias)
+        layers.append(output_layer)
         self.net = nn.Sequential(*layers)
 
     def _time_feature(
