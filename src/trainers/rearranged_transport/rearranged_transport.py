@@ -42,8 +42,8 @@ class RearrangedTransportTrainer(BaseTrainer):
             transport_trainer=transport_trainer,
         )
 
+        predictor.train()
         predictor.transport_predictor.eval()
-        predictor.rearrangement_flow.train()
 
         radius = self._ball_radius(
             alpha=self.config.alpha,
@@ -282,8 +282,8 @@ class SupervisedRearrangedTransportTrainer(RearrangedTransportTrainer):
             transport_trainer=transport_trainer,
         )
 
+        predictor.train()
         predictor.transport_predictor.eval()
-        predictor.rearrangement_flow.train()
 
         radius = self._ball_radius(
             alpha=self.config.alpha,

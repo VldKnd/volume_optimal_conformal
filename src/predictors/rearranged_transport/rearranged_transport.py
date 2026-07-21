@@ -154,7 +154,7 @@ class RearrangedTransportPredictor(
     ) -> torch.Tensor:
         x = self.to_device(x)
         u = self.to_device(u)
-        return self.rearrangement_flow.forward(u=u, x=x, end_time=1.0)
+        return self.rearrangement_flow.forward(u=u, x=x)
 
     def rearrangement_pullback(
         self,

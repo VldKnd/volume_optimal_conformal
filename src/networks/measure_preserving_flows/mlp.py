@@ -107,10 +107,10 @@ class MeasurePreservingMLP(nn.Module):
                 make_activation(activation, activation_power=activation_power),
             ])
 
-        output_layer = nn.Linear(hidden_dim, self.output_dim)
+        output_layer = spectral_norm(nn.Linear(hidden_dim, self.output_dim))
         nn.init.zeros_(output_layer.weight)
         nn.init.zeros_(output_layer.bias)
-        layers.append(spectral_norm(output_layer))
+        layers.append(output_layer)
         layers.append(make_activation("tanh"))
         self.net = nn.Sequential(*layers)
 

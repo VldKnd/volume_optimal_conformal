@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from typing import Any
 
 import torch
@@ -21,8 +20,8 @@ class VectorFieldFlow(nn.Module):
 
     Here u is the integrated variable and x is optional context.
 
-    When ``number_of_steps`` is set, each solve samples a strictly ordered time
-    grid and takes one fixed solver step between every adjacent pair of nodes.
+    Training-mode ``forward`` calls with no explicit endpoint use a sampled
+    endpoint and time grid. All other solves use a uniform deterministic grid.
 
     By default, backpropagation through the ODE solve uses torchdiffeq's adjoint
     method. Set ``use_adjoint=False`` to use regular autograd through ``odeint``.
@@ -51,12 +50,6 @@ class VectorFieldFlow(nn.Module):
 
         if number_of_steps is not None and number_of_steps < 1:
             raise ValueError("number_of_steps must be positive when provided.")
-
-        if number_of_steps is not None and method not in _FIXED_STEP_METHODS:
-            raise ValueError(
-                "number_of_steps is only supported for torchdiffeq fixed-step "
-                f"methods: {sorted(_FIXED_STEP_METHODS)}."
-            )
 
         if number_of_steps is not None and method not in _RANDOM_TIME_GRID_METHODS:
             raise ValueError(
@@ -102,73 +95,48 @@ class VectorFieldFlow(nn.Module):
 
         self.endpoint_alpha = float(endpoint_alpha)
         self.last_end_time = 1.0
-        self.last_time_grid: torch.Tensor | None = None
 
-    def _sample_time_grid(
+    def _uniform_time_grid(
         self,
         start_time: float,
         end_time: float,
         u: torch.Tensor,
     ) -> torch.Tensor:
-        """Return N + 1 ordered nodes defining exactly N solver steps."""
-        start_time = float(start_time)
-        end_time = float(end_time)
-
-        if not math.isfinite(start_time) or not math.isfinite(end_time):
-            raise ValueError("start_time and end_time must be finite.")
-
-        start = u.new_tensor(start_time)
-        end = u.new_tensor(end_time)
-
         if start_time == end_time:
-            return start.unsqueeze(0)
+            return u.new_tensor([start_time])
 
         if self.number_of_steps is None:
-            return torch.stack((start, end))
+            return u.new_tensor([start_time, end_time])
 
-        if self.number_of_steps == 1:
-            return torch.stack((start, end))
-
-        lower_time = min(start_time, end_time)
-        upper_time = max(start_time, end_time)
-        lower = u.new_tensor(lower_time)
-        upper = u.new_tensor(upper_time)
-
-        interior_indexes = torch.arange(
-            1,
-            self.number_of_steps,
+        return torch.linspace(
+            start_time,
+            end_time,
+            self.number_of_steps + 1,
             device=u.device,
             dtype=u.dtype,
         )
-        # Keep every node near its uniform-grid position so random grids cannot
-        # contain arbitrarily small or large solver steps.
-        jitter = (
-            torch.rand(
-                self.number_of_steps - 1,
-                device=u.device,
-                dtype=u.dtype,
-            ) - 0.5
-        ) * _TIME_GRID_JITTER
-        interior_fractions = (interior_indexes + jitter) / self.number_of_steps
-        interior_times = lower + (upper - lower) * interior_fractions
-        ascending_times = torch.cat(
-            (
-                lower.unsqueeze(0),
-                interior_times,
-                upper.unsqueeze(0),
-            )
+
+    def _sample_training_time_grid(
+        self,
+        end_time: float,
+        u: torch.Tensor,
+    ) -> torch.Tensor:
+        if self.number_of_steps is None:
+            return u.new_tensor([0.0, end_time])
+
+        times = torch.linspace(
+            0.0,
+            end_time,
+            self.number_of_steps + 1,
+            device=u.device,
+            dtype=u.dtype,
         )
 
-        times = ascending_times if start_time < end_time else ascending_times.flip(0)
-        time_differences = times[1:] - times[:-1]
-        expected_sign = 1.0 if start_time < end_time else -1.0
-
-        if not bool(torch.all(expected_sign * time_differences > 0).item()):
-            raise RuntimeError(
-                "The sampled integration times are not strictly monotone in the "
-                f"state dtype {u.dtype}. Use fewer steps, a wider time interval, "
-                "or a higher-precision dtype."
-            )
+        if self.number_of_steps > 1:
+            step_size = end_time / self.number_of_steps
+            times[1:-1] += (
+                torch.rand_like(times[1:-1]) - 0.5
+            ) * _TIME_GRID_JITTER * step_size
 
         return times
 
@@ -200,17 +168,23 @@ class VectorFieldFlow(nn.Module):
         start_time: float = 0.0,
         end_time: float = 1.0,
     ) -> torch.Tensor:
-        context = self._prepare_context(u=u, x=x)
-        times = self._sample_time_grid(
+        times = self._uniform_time_grid(
             start_time=start_time,
             end_time=end_time,
             u=u,
         )
-        self.last_time_grid = times.detach().clone()
+        return self._solve(u=u, x=x, times=times)
 
+    def _solve(
+        self,
+        u: torch.Tensor,
+        x: torch.Tensor | None,
+        times: torch.Tensor,
+    ) -> torch.Tensor:
         if times.numel() == 1:
             return u
 
+        context = self._prepare_context(u=u, x=x)
         solver = odeint_adjoint if self.use_adjoint else odeint
         solver_kwargs: dict[str, Any] = {
             "rtol": self.rtol,
@@ -273,11 +247,16 @@ class VectorFieldFlow(nn.Module):
         x: torch.Tensor | None = None,
         end_time: float | None = None,
     ) -> torch.Tensor:
-        if end_time is None:
+        if self.training and end_time is None:
             end_time = self._sample_end_time(u)
-        else:
-            end_time = float(end_time)
-            self.last_end_time = end_time
+            times = self._sample_training_time_grid(
+                end_time=end_time,
+                u=u,
+            )
+            return self._solve(u=u, x=x, times=times)
+
+        end_time = 1.0 if end_time is None else float(end_time)
+        self.last_end_time = end_time
 
         return self.integrate(u, x=x, start_time=0.0, end_time=end_time)
 
@@ -287,11 +266,8 @@ class VectorFieldFlow(nn.Module):
         x: torch.Tensor | None = None,
         start_time: float | None = None,
     ) -> torch.Tensor:
-        if start_time is None:
-            start_time = self._sample_end_time(u)
-        else:
-            start_time = float(start_time)
-            self.last_end_time = start_time
+        start_time = 1.0 if start_time is None else float(start_time)
+        self.last_end_time = start_time
 
         return self.integrate(u, x=x, start_time=start_time, end_time=0.0)
 
