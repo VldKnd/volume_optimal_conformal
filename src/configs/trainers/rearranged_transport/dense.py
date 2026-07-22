@@ -22,9 +22,3 @@ class SupervisedRearrangedTransportTrainerConfig(
     RearrangedTransportTrainerConfig
 ):
     pass
-
-
-DenseRearrangedTransportTrainerConfig = RearrangedTransportTrainerConfig
-SupervisedDenseRearrangedTransportTrainerConfig = (
-    SupervisedRearrangedTransportTrainerConfig
-)

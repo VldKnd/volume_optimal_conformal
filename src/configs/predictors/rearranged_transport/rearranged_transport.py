@@ -37,11 +37,8 @@ class RearrangedTransportPredictorConfig(BaseModel):
     method: str = "rk4"
     rtol: float = Field(default=1e-5, gt=0.0)
     atol: float = Field(default=1e-6, gt=0.0)
-    number_of_steps: int | None = Field(default=16, gt=0)
+    number_of_steps: int | None = Field(default=None, gt=0)
 
     seed: int = 0
     device: str = "cpu"
     dtype: str = "float32"
-
-
-DenseRearrangedTransportPredictorConfig = RearrangedTransportPredictorConfig

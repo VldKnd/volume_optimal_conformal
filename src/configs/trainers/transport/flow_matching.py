@@ -2,8 +2,9 @@
 
 from pydantic import BaseModel, Field
 
+
 class FlowMatchingTrainerConfig(BaseModel):
-    epochs: int = 100
+    epochs: int = Field(default=100, gt=0)
 
     batch_size: int = 256
 

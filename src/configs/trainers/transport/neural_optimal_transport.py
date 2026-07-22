@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 
 class NeuralOptimalTransportTrainerConfig(BaseModel):
-    epochs: int = 100
+    epochs: int = Field(default=100, gt=0)
     learning_rate: float = Field(default=1e-3, gt=0.0)
     weight_decay: float = Field(default=1e-4, ge=0.0)
 
