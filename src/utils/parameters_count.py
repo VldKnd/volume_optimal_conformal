@@ -7,6 +7,7 @@ import torch.nn as nn
 from pydantic import BaseModel
 
 from configs.predictors.rearranged_transport import (
+    AmortizedRearrangedTransportPredictorConfig,
     RearrangedTransportPredictorConfig,
 )
 from configs.predictors.transport import (
@@ -31,6 +32,7 @@ PredictorConfig = (
     | NeuralOptimalTransportPredictorConfig
     | NeuralSplineFlowPredictorConfig
     | NormalizingFlowPredictorConfig
+    | AmortizedRearrangedTransportPredictorConfig
     | RearrangedTransportPredictorConfig
 )
 
@@ -39,6 +41,7 @@ _CONFIG_BY_TYPE = {
     "neural_optimal_transport": NeuralOptimalTransportPredictorConfig,
     "neural_spline_flow": NeuralSplineFlowPredictorConfig,
     "normalizing_flow": NormalizingFlowPredictorConfig,
+    "amortized_rearranged_transport": AmortizedRearrangedTransportPredictorConfig,
     "rearranged_transport": RearrangedTransportPredictorConfig,
     "dense_rearranged_transport": RearrangedTransportPredictorConfig,
 }
@@ -137,12 +140,15 @@ def _build_rearrangement_flow_from_config(
     config: RearrangedTransportPredictorConfig,
 ) -> nn.Module:
     cpu_config = _copy_config_to_cpu(config)
+    context_dimension = cpu_config.x_dim
+    if isinstance(cpu_config, AmortizedRearrangedTransportPredictorConfig):
+        context_dimension += 1
 
     vector_field = None
     if cpu_config.vector_field_implementation == "sparse":
         vector_field = SparseGaussianSkewVectorField(
             dimension=cpu_config.y_dim,
-            context_dimension=cpu_config.x_dim,
+            context_dimension=context_dimension,
             hidden_dimension=cpu_config.hidden_dimension,
             number_of_hidden_layers=cpu_config.number_of_hidden_layers,
             time_dependent=cpu_config.time_dependent,
@@ -152,7 +158,7 @@ def _build_rearrangement_flow_from_config(
 
     return GaussianSkewFieldFlow(
         dimension=cpu_config.y_dim,
-        context_dimension=cpu_config.x_dim,
+        context_dimension=context_dimension,
         vector_field=vector_field,
         use_adjoint=cpu_config.use_adjoint,
         method=cpu_config.method,

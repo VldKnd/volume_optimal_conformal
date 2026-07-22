@@ -59,6 +59,8 @@ class RearrangedTransportPredictor(
     T is an already-trained transport predictor supplied by the caller.
     """
 
+    config_class = RearrangedTransportPredictorConfig
+
     def __init__(
         self,
         config: RearrangedTransportPredictorConfig,
@@ -83,7 +85,7 @@ class RearrangedTransportPredictor(
         vector_field = self._make_rearrangement_vector_field()
         self.rearrangement_flow = GaussianSkewFieldFlow(
             dimension=config.y_dim,
-            context_dimension=config.x_dim,
+            context_dimension=self._rearrangement_context_dimension(),
             vector_field=vector_field,
             use_adjoint=config.use_adjoint,
             method=config.method,
@@ -105,7 +107,7 @@ class RearrangedTransportPredictor(
         if self.config.vector_field_implementation == "sparse":
             return SparseGaussianSkewVectorField(
                 dimension=self.config.y_dim,
-                context_dimension=self.config.x_dim,
+                context_dimension=self._rearrangement_context_dimension(),
                 hidden_dimension=self.config.hidden_dimension,
                 number_of_hidden_layers=self.config.number_of_hidden_layers,
                 time_dependent=self.config.time_dependent,
@@ -117,6 +119,9 @@ class RearrangedTransportPredictor(
             "Unknown vector_field_implementation="
             f"{self.config.vector_field_implementation!r}."
         )
+
+    def _rearrangement_context_dimension(self) -> int:
+        return self.x_dim
 
     def _validate_transport_predictor(self) -> None:
         predictor_x_dim = getattr(self.transport_predictor, "x_dim", None)
@@ -302,7 +307,7 @@ class RearrangedTransportPredictor(
         device = str(torch.device(map_location))
         config_data = dict(data["config"])
         config_data["device"] = device
-        config = RearrangedTransportPredictorConfig.model_validate(config_data)
+        config = cls.config_class.model_validate(config_data)
 
         transport_data = data.get("transport_predictor")
         is_legacy_checkpoint = transport_data is None
