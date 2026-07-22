@@ -212,7 +212,7 @@ class GaussianSkewFieldFlow(VectorFieldFlow):
         adjoint_method: str | None = None,
         adjoint_rtol: float | None = None,
         adjoint_atol: float | None = None,
-        adjoint_options: dict[str, Any] | None = None,
+        adjoint_options: dict[str, Any] | None = { "norm":"seminorm" },
         number_of_steps: int | None = None,
         context_dimension: int = 0,
         vector_field: DenseGaussianSkewVectorField | None = None,

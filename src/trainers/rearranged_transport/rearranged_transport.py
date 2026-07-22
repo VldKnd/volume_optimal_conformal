@@ -9,6 +9,7 @@ from tqdm import trange
 
 from configs.trainers.rearranged_transport.dense import (
     RearrangedTransportTrainerConfig,
+    SupervisedRearrangedTransportTrainerConfig,
 )
 from predictors.rearranged_transport.rearranged_transport import (
     RearrangedTransportPredictor,
@@ -18,29 +19,43 @@ from trainers.base import BaseTrainer
 
 class RearrangedTransportTrainer(BaseTrainer):
 
+    config_class = RearrangedTransportTrainerConfig
+    trainer_type = "rearranged_transport_trainer"
+
     def __init__(
         self,
         config: RearrangedTransportTrainerConfig,
     ):
-        self.config = config
-        self.training_history: list[dict] = []
+        super().__init__(config)
 
     def fit(
         self,
         predictor: RearrangedTransportPredictor,
         dataloader: torch.utils.data.DataLoader,
         transport_trainer: BaseTrainer | None = None,
+        max_epochs: int | None = None,
     ) -> RearrangedTransportPredictor:
         if dataloader is None:
             raise ValueError(
                 "dataloader must be provided to train rearranged transport."
             )
 
-        self._fit_transport_map_if_requested(
-            predictor=predictor,
-            dataloader=dataloader,
-            transport_trainer=transport_trainer,
-        )
+        end_epoch = self._fit_end_epoch(max_epochs)
+        if end_epoch <= self.completed_epochs:
+            predictor.eval()
+            return predictor
+
+        steps_per_epoch = len(dataloader)
+        self._validate_steps_per_epoch(steps_per_epoch)
+        self._restore_rng_state()
+
+        if not self.initialization_complete:
+            self._fit_transport_map_if_requested(
+                predictor=predictor,
+                dataloader=dataloader,
+                transport_trainer=transport_trainer,
+            )
+            self.initialization_complete = True
 
         predictor.train()
         predictor.transport_predictor.eval()
@@ -50,21 +65,15 @@ class RearrangedTransportTrainer(BaseTrainer):
             dimension=predictor.y_dim,
         )
 
-        optimizer = torch.optim.AdamW(
-            predictor.rearrangement_flow.parameters(),
-            lr=self.config.learning_rate,
-            weight_decay=self.config.weight_decay,
+        optimizer, scheduler = self._setup_optimization(
+            predictor.rearrangement_flow.named_parameters(prefix="rearrangement_flow"),
+            steps_per_epoch=steps_per_epoch,
+            predictor=predictor,
         )
 
-        scheduler = None
-        if self.config.use_cosine_scheduler:
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                optimizer,
-                T_max=self.config.epochs * len(dataloader),
-            )
-
         progress = trange(
-            self.config.epochs,
+            self.completed_epochs,
+            end_epoch,
             disable=not self.config.verbose,
             desc="Rearranged Transport",
         )
@@ -96,9 +105,7 @@ class RearrangedTransportTrainer(BaseTrainer):
                 )
 
                 if not torch.isfinite(loss):
-                    raise FloatingPointError(
-                        "Non-finite rearranged transport loss."
-                    )
+                    raise FloatingPointError("Non-finite rearranged transport loss.")
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -109,6 +116,7 @@ class RearrangedTransportTrainer(BaseTrainer):
                 )
 
                 optimizer.step()
+                self.global_step += 1
 
                 if scheduler is not None:
                     scheduler.step()
@@ -128,6 +136,7 @@ class RearrangedTransportTrainer(BaseTrainer):
                     "learning_rate": optimizer.param_groups[0]["lr"],
                 }
             )
+            self.completed_epochs = epoch + 1
 
             if self.config.verbose:
                 progress.set_description(
@@ -172,10 +181,7 @@ class RearrangedTransportTrainer(BaseTrainer):
             )
 
         grouped_weights = weights.reshape(-1, mc_samples_per_x)
-        return (
-            torch.logsumexp(grouped_weights, dim=1) -
-            math.log(mc_samples_per_x)
-        )
+        return (torch.logsumexp(grouped_weights, dim=1) - math.log(mc_samples_per_x))
 
     def _fit_transport_map_if_requested(
         self,
@@ -264,11 +270,15 @@ class SupervisedRearrangedTransportTrainer(RearrangedTransportTrainer):
     as RearrangedTransportTrainer.
     """
 
+    config_class = SupervisedRearrangedTransportTrainerConfig
+    trainer_type = "supervised_rearranged_transport_trainer"
+
     def fit(
         self,
         predictor: RearrangedTransportPredictor,
         dataloader: torch.utils.data.DataLoader,
         transport_trainer: BaseTrainer | None = None,
+        max_epochs: int | None = None,
     ) -> RearrangedTransportPredictor:
         if dataloader is None:
             raise ValueError(
@@ -276,11 +286,22 @@ class SupervisedRearrangedTransportTrainer(RearrangedTransportTrainer):
                 "rearranged transport."
             )
 
-        self._fit_transport_map_if_requested(
-            predictor=predictor,
-            dataloader=dataloader,
-            transport_trainer=transport_trainer,
-        )
+        end_epoch = self._fit_end_epoch(max_epochs)
+        if end_epoch <= self.completed_epochs:
+            predictor.eval()
+            return predictor
+
+        steps_per_epoch = len(dataloader)
+        self._validate_steps_per_epoch(steps_per_epoch)
+        self._restore_rng_state()
+
+        if not self.initialization_complete:
+            self._fit_transport_map_if_requested(
+                predictor=predictor,
+                dataloader=dataloader,
+                transport_trainer=transport_trainer,
+            )
+            self.initialization_complete = True
 
         predictor.train()
         predictor.transport_predictor.eval()
@@ -290,21 +311,15 @@ class SupervisedRearrangedTransportTrainer(RearrangedTransportTrainer):
             dimension=predictor.y_dim,
         )
 
-        optimizer = torch.optim.AdamW(
-            predictor.rearrangement_flow.parameters(),
-            lr=self.config.learning_rate,
-            weight_decay=self.config.weight_decay,
+        optimizer, scheduler = self._setup_optimization(
+            predictor.rearrangement_flow.named_parameters(prefix="rearrangement_flow"),
+            steps_per_epoch=steps_per_epoch,
+            predictor=predictor,
         )
 
-        scheduler = None
-        if self.config.use_cosine_scheduler:
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                optimizer,
-                T_max=self.config.epochs * len(dataloader),
-            )
-
         progress = trange(
-            self.config.epochs,
+            self.completed_epochs,
+            end_epoch,
             disable=not self.config.verbose,
             desc="Supervised Rearranged Transport",
         )
@@ -359,6 +374,7 @@ class SupervisedRearrangedTransportTrainer(RearrangedTransportTrainer):
                 )
 
                 optimizer.step()
+                self.global_step += 1
 
                 if scheduler is not None:
                     scheduler.step()
@@ -387,6 +403,7 @@ class SupervisedRearrangedTransportTrainer(RearrangedTransportTrainer):
                     "learning_rate": optimizer.param_groups[0]["lr"],
                 }
             )
+            self.completed_epochs = epoch + 1
 
             if self.config.verbose:
                 progress.set_description(
@@ -405,7 +422,3 @@ class SupervisedRearrangedTransportTrainer(RearrangedTransportTrainer):
             "Expected dataloader batches to be non-empty tuple/list pairs "
             "(x_batch, y_batch)."
         )
-
-
-DenseRearrangedTransportTrainer = RearrangedTransportTrainer
-SupervisedDenseRearrangedTransportTrainer = SupervisedRearrangedTransportTrainer

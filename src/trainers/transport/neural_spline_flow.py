@@ -14,38 +14,47 @@ from trainers.base import BaseTrainer
 
 class NeuralSplineFlowTrainer(BaseTrainer):
 
+    config_class = NeuralSplineFlowTrainerConfig
+    trainer_type = "neural_spline_flow_trainer"
+
     def __init__(
         self,
         config: NeuralSplineFlowTrainerConfig,
     ):
-        self.config = config
-        self.training_history: list[dict] = []
+        super().__init__(config)
 
     def fit(
         self,
         predictor: NeuralSplineFlowPredictor,
         dataloader: torch.utils.data.DataLoader,
+        max_epochs: int | None = None,
     ) -> NeuralSplineFlowPredictor:
+        end_epoch = self._fit_end_epoch(max_epochs)
 
-        predictor.warmup_y_scaler(dataloader)
+        if end_epoch <= self.completed_epochs:
+            predictor.eval()
+            return predictor
+
+        steps_per_epoch = len(dataloader)
+        self._validate_steps_per_epoch(steps_per_epoch)
+        self._restore_rng_state()
+
+        if not self.initialization_complete:
+            predictor.warmup_y_scaler(dataloader)
+            self.initialization_complete = True
+
         predictor.y_scaler.eval()
         predictor.flow_layers.train()
 
-        optimizer = torch.optim.AdamW(
-            predictor.flow_layers.parameters(),
-            lr=self.config.learning_rate,
-            weight_decay=self.config.weight_decay,
+        optimizer, scheduler = self._setup_optimization(
+            predictor.flow_layers.named_parameters(prefix="flow_layers"),
+            steps_per_epoch=steps_per_epoch,
+            predictor=predictor,
         )
 
-        scheduler = None
-        if self.config.use_cosine_scheduler:
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                optimizer,
-                T_max=self.config.epochs * len(dataloader),
-            )
-
         progress = trange(
-            self.config.epochs,
+            self.completed_epochs,
+            end_epoch,
             disable=not self.config.verbose,
             desc="Neural Spline Flow",
         )
@@ -73,6 +82,7 @@ class NeuralSplineFlowTrainer(BaseTrainer):
                 )
 
                 optimizer.step()
+                self.global_step += 1
 
                 if scheduler is not None:
                     scheduler.step()
@@ -89,6 +99,7 @@ class NeuralSplineFlowTrainer(BaseTrainer):
                     "learning_rate": optimizer.param_groups[0]["lr"],
                 }
             )
+            self.completed_epochs = epoch + 1
 
             if self.config.verbose:
                 progress.set_description(f"Epoch {epoch + 1} | NLL {epoch_loss:.4f}")
