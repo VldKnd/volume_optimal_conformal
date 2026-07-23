@@ -1,9 +1,12 @@
-# src/configs/calibrators/norm_calibrator.py
-
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
+
 
 class NormCalibratorConfig(BaseModel):
     type: Literal["norm"] = "norm"
-    norm: float = 2.0
+    p: float = Field(
+        default=2.0,
+        gt=0.0,
+        validation_alias=AliasChoices("p", "norm"),
+    )

@@ -61,7 +61,7 @@ class RearrangedTransportTrainer(BaseTrainer):
         predictor.transport_predictor.eval()
 
         radius = self._ball_radius(
-            alpha=self.config.alpha,
+            coverage_mass=self.config.coverage_mass,
             dimension=predictor.y_dim,
         )
 
@@ -130,7 +130,7 @@ class RearrangedTransportTrainer(BaseTrainer):
                     "epoch": epoch + 1,
                     "log_volume_loss": epoch_loss,
                     "radius": radius,
-                    "alpha": self.config.alpha,
+                    "coverage_mass": self.config.coverage_mass,
                     "mc_samples_per_x": self.config.mc_samples_per_x,
                     "training_time": time.perf_counter() - start,
                     "learning_rate": optimizer.param_groups[0]["lr"],
@@ -253,10 +253,10 @@ class RearrangedTransportTrainer(BaseTrainer):
 
     def _ball_radius(
         self,
-        alpha: float,
+        coverage_mass: float,
         dimension: int,
     ) -> float:
-        return float(chi.ppf(alpha, df=dimension))
+        return float(chi.ppf(coverage_mass, df=dimension))
 
 
 class SupervisedRearrangedTransportTrainer(RearrangedTransportTrainer):
@@ -266,8 +266,8 @@ class SupervisedRearrangedTransportTrainer(RearrangedTransportTrainer):
     Each y from the dataloader is pulled back through the wrapped transport and
     then through the current rearrangement flow without gradient tracking. The
     resulting latent point is accepted only if it lies inside the chi-radius
-    ball specified by config.alpha. Accepted points use the same log-volume loss
-    as RearrangedTransportTrainer.
+    ball specified by config.coverage_mass. Accepted points use the same
+    log-volume loss as RearrangedTransportTrainer.
     """
 
     config_class = SupervisedRearrangedTransportTrainerConfig
@@ -307,7 +307,7 @@ class SupervisedRearrangedTransportTrainer(RearrangedTransportTrainer):
         predictor.transport_predictor.eval()
 
         radius = self._ball_radius(
-            alpha=self.config.alpha,
+            coverage_mass=self.config.coverage_mass,
             dimension=predictor.y_dim,
         )
 
@@ -384,7 +384,8 @@ class SupervisedRearrangedTransportTrainer(RearrangedTransportTrainer):
             if not epoch_losses:
                 raise RuntimeError(
                     "No dataloader samples were accepted inside the latent ball. "
-                    "Increase config.alpha or use a larger batch/dataset."
+                    "Increase config.coverage_mass or use a larger "
+                    "batch/dataset."
                 )
 
             epoch_loss = float(torch.tensor(epoch_losses).mean())
@@ -395,7 +396,7 @@ class SupervisedRearrangedTransportTrainer(RearrangedTransportTrainer):
                     "epoch": epoch + 1,
                     "log_volume_loss": epoch_loss,
                     "radius": radius,
-                    "alpha": self.config.alpha,
+                    "coverage_mass": self.config.coverage_mass,
                     "accepted_samples": accepted_samples,
                     "seen_samples": seen_samples,
                     "acceptance_rate": acceptance_rate,

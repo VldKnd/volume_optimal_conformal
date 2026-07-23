@@ -1,12 +1,17 @@
 # src/configs/trainers/rearranged_transport/dense.py
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 class RearrangedTransportTrainerConfig(BaseModel):
     epochs: int = Field(default=100, gt=0)
 
-    alpha: float = Field(default=0.9, gt=0.0, lt=1.0)
+    coverage_mass: float = Field(
+        default=0.9,
+        gt=0.0,
+        lt=1.0,
+        validation_alias=AliasChoices("coverage_mass", "alpha"),
+    )
     mc_samples_per_x: int = Field(default=1, gt=0)
     train_transport_map: bool = False
 
@@ -18,7 +23,5 @@ class RearrangedTransportTrainerConfig(BaseModel):
     verbose: bool = True
 
 
-class SupervisedRearrangedTransportTrainerConfig(
-    RearrangedTransportTrainerConfig
-):
+class SupervisedRearrangedTransportTrainerConfig(RearrangedTransportTrainerConfig):
     pass

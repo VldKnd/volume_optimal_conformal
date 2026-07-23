@@ -94,7 +94,7 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
         for epoch in progress:
             start = time.perf_counter()
             epoch_losses: list[float] = []
-            coverage_levels: list[float] = []
+            coverage_masses: list[float] = []
             radii: list[float] = []
 
             for batch in dataloader:
@@ -105,10 +105,10 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
                     mc_samples_per_x=self.config.mc_samples_per_x,
                 )
 
-                alpha = self._sample_coverage_level(predictor)
-                alpha_value = float(alpha.item())
+                coverage_mass = self._sample_coverage_mass(predictor)
+                coverage_value = float(coverage_mass.item())
                 radius = self._ball_radius(
-                    alpha=alpha_value,
+                    coverage_mass=coverage_value,
                     dimension=predictor.y_dim,
                 )
                 u = self._sample_uniform_ball(
@@ -123,7 +123,7 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
                     predictor=predictor,
                     x=x,
                     u=u,
-                    alpha=alpha,
+                    coverage_mass=coverage_mass,
                     mc_samples_per_x=self.config.mc_samples_per_x,
                 )
 
@@ -147,20 +147,20 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
                     scheduler.step()
 
                 epoch_losses.append(float(loss.detach().cpu()))
-                coverage_levels.append(alpha_value)
+                coverage_masses.append(coverage_value)
                 radii.append(radius)
 
             epoch_loss = float(torch.tensor(epoch_losses).mean())
-            coverage_tensor = torch.tensor(coverage_levels)
+            coverage_tensor = torch.tensor(coverage_masses)
             radius_tensor = torch.tensor(radii)
 
             self.training_history.append(
                 {
                     "epoch": epoch + 1,
                     "log_volume_loss": epoch_loss,
-                    "coverage_level_mean": float(coverage_tensor.mean()),
-                    "coverage_level_min": float(coverage_tensor.min()),
-                    "coverage_level_max": float(coverage_tensor.max()),
+                    "coverage_mass_mean": float(coverage_tensor.mean()),
+                    "coverage_mass_min": float(coverage_tensor.min()),
+                    "coverage_mass_max": float(coverage_tensor.max()),
                     "radius_mean": float(radius_tensor.mean()),
                     "radius_min": float(radius_tensor.min()),
                     "radius_max": float(radius_tensor.max()),
@@ -185,13 +185,13 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
         predictor: AmortizedRearrangedTransport,
         x: torch.Tensor,
         u: torch.Tensor,
-        alpha: torch.Tensor | float,
+        coverage_mass: torch.Tensor | float,
         mc_samples_per_x: int = 1,
     ) -> torch.Tensor:
         weights = predictor.log_det(
             x=x,
             u=u,
-            alpha=alpha,
+            coverage_mass=coverage_mass,
         )
 
         return self._grouped_log_mean_exp(
@@ -200,7 +200,7 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
         ).mean()
 
     @staticmethod
-    def _sample_coverage_level(
+    def _sample_coverage_mass(
         predictor: AmortizedRearrangedTransport,
     ) -> torch.Tensor:
         epsilon = torch.finfo(predictor.dtype).eps
