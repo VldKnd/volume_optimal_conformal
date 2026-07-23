@@ -7,7 +7,7 @@ from typing import Any, Self
 import torch
 from torch.utils.data import DataLoader
 
-from configs.conformal import ConformalPredictorConfig
+from configs.conformal import TransportBasedConformalPredictorConfig
 from conformal.calibrators.base import BaseCalibrator
 from conformal.calibrators.factory import make_calibrator
 from conformal.calibrators.no_calibrator import NoCalibrator
@@ -17,7 +17,7 @@ from predictors.rearranged_transport.amortized_rearranged_transport import (
 )
 
 
-class ConformalPredictor:
+class TransportBasedConformalPredictor:
     """Calibrated prediction-region wrapper around a transport predictor.
 
     The base predictor maps latent scores ``u`` to observations ``y``. The
@@ -28,10 +28,10 @@ class ConformalPredictor:
     def __init__(
         self,
         predictor: Any,
-        config: ConformalPredictorConfig | Mapping[str, Any],
+        config: TransportBasedConformalPredictorConfig | Mapping[str, Any],
     ):
-        if not isinstance(config, ConformalPredictorConfig):
-            config = ConformalPredictorConfig.model_validate(config)
+        if not isinstance(config, TransportBasedConformalPredictorConfig):
+            config = TransportBasedConformalPredictorConfig.model_validate(config)
 
         self._validate_predictor(predictor)
 
@@ -566,7 +566,8 @@ class ConformalPredictor:
     def _require_calibrated(self) -> None:
         if not self.is_calibrated:
             raise RuntimeError(
-                "ConformalPredictor must be calibrated before this operation."
+                "TransportBasedConformalPredictor must be calibrated before "
+                "this operation."
             )
 
     @staticmethod

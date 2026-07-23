@@ -1,7 +1,9 @@
-from configs.conformal import ConformalPredictorConfig
-from conformal.conformal_predictor import ConformalPredictor
+from configs.conformal import TransportBasedConformalPredictorConfig
+from conformal.transport_based_conformal_predictor import (
+    TransportBasedConformalPredictor,
+)
 
 __all__ = [
-    "ConformalPredictor",
-    "ConformalPredictorConfig",
+    "TransportBasedConformalPredictor",
+    "TransportBasedConformalPredictorConfig",
 ]

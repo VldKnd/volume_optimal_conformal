@@ -3,7 +3,7 @@ from pydantic import AliasChoices, BaseModel, Field
 from configs.calibrators import CalibratorConfig, NormCalibratorConfig
 
 
-class ConformalPredictorConfig(BaseModel):
+class TransportBasedConformalPredictorConfig(BaseModel):
     """Configuration for a calibrated wrapper around a transport predictor.
 
     ``coverage_mass`` is the desired probability mass of the prediction
