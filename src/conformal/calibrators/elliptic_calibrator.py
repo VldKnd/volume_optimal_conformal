@@ -1,3 +1,5 @@
+import math
+
 import torch
 from sklearn.neighbors import NearestNeighbors
 
@@ -84,6 +86,34 @@ class EllipticCalibrator(BaseCalibrator):
                 inverse_covariances,
                 scores,
             ).clamp_min(0.0)
+        )
+
+    def estimate_log_volume(self, x: torch.Tensor) -> torch.Tensor:
+        """Return the log-volume of the calibrated local ellipsoid at each x."""
+        if self.threshold is None:
+            raise RuntimeError("EllipticCalibrator must be fitted first.")
+
+        inverse_covariances = self._local_inverse_covariances(x).to(
+            device=x.device,
+            dtype=x.dtype,
+        )
+        sign, log_abs_determinant = torch.linalg.slogdet(inverse_covariances)
+        if torch.any(sign <= 0):
+            raise RuntimeError(
+                "Local inverse covariance must have positive determinant."
+            )
+
+        dimension = inverse_covariances.shape[-1]
+        log_unit_ball_volume = (
+            0.5 * dimension * math.log(math.pi)
+            - math.lgamma(0.5 * dimension + 1.0)
+        )
+        threshold = self.threshold.to(device=x.device, dtype=x.dtype)
+
+        return (
+            log_unit_ball_volume
+            + dimension * torch.log(threshold)
+            - 0.5 * log_abs_determinant
         )
 
     def _local_inverse_covariances(
