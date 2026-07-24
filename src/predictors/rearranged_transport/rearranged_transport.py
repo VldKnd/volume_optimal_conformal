@@ -11,6 +11,7 @@ from configs.predictors.rearranged_transport.rearranged_transport import (
     RearrangedTransportPredictorConfig,
 )
 from configs.predictors.transport import (
+    ConvexPotentialFlowPredictorConfig,
     FlowMatchingPredictorConfig,
     NeuralOptimalTransportPredictorConfig,
     NeuralSplineFlowPredictorConfig,
@@ -26,6 +27,7 @@ from predictors.rearranged_transport.base import (
     BaseRearrangedTransportPredictor,
 )
 from predictors.transport import (
+    ConvexPotentialFlowPredictor,
     FlowMatchingPredictor,
     NeuralOptimalTransportPredictor,
     NeuralSplineFlowPredictor,
@@ -34,6 +36,7 @@ from predictors.transport import (
 from predictors.transport.base import BaseTransportPredictor
 
 _TRANSPORT_CONFIG_BY_TYPE = {
+    "convex_potential_flow": ConvexPotentialFlowPredictorConfig,
     "flow_matching": FlowMatchingPredictorConfig,
     "neural_optimal_transport": NeuralOptimalTransportPredictorConfig,
     "neural_spline_flow": NeuralSplineFlowPredictorConfig,
@@ -41,6 +44,7 @@ _TRANSPORT_CONFIG_BY_TYPE = {
 }
 
 _TRANSPORT_PREDICTOR_BY_TYPE = {
+    "convex_potential_flow": ConvexPotentialFlowPredictor,
     "flow_matching": FlowMatchingPredictor,
     "neural_optimal_transport": NeuralOptimalTransportPredictor,
     "neural_spline_flow": NeuralSplineFlowPredictor,

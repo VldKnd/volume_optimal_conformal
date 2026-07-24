@@ -11,6 +11,7 @@ from configs.predictors.rearranged_transport import (
     RearrangedTransportPredictorConfig,
 )
 from configs.predictors.transport import (
+    ConvexPotentialFlowPredictorConfig,
     FlowMatchingPredictorConfig,
     NeuralOptimalTransportPredictorConfig,
     NeuralSplineFlowPredictorConfig,
@@ -21,6 +22,7 @@ from networks.measure_preserving_flows.sparse_skew_symmetric_vector_field import
     SparseGaussianSkewVectorField,
 )
 from predictors.transport import (
+    ConvexPotentialFlowPredictor,
     FlowMatchingPredictor,
     NeuralOptimalTransportPredictor,
     NeuralSplineFlowPredictor,
@@ -28,7 +30,8 @@ from predictors.transport import (
 )
 
 PredictorConfig = (
-    FlowMatchingPredictorConfig
+    ConvexPotentialFlowPredictorConfig
+    | FlowMatchingPredictorConfig
     | NeuralOptimalTransportPredictorConfig
     | NeuralSplineFlowPredictorConfig
     | NormalizingFlowPredictorConfig
@@ -37,6 +40,7 @@ PredictorConfig = (
 )
 
 _CONFIG_BY_TYPE = {
+    "convex_potential_flow": ConvexPotentialFlowPredictorConfig,
     "flow_matching": FlowMatchingPredictorConfig,
     "neural_optimal_transport": NeuralOptimalTransportPredictorConfig,
     "neural_spline_flow": NeuralSplineFlowPredictorConfig,
@@ -47,6 +51,7 @@ _CONFIG_BY_TYPE = {
 }
 
 _PREDICTOR_BY_CONFIG_TYPE = {
+    ConvexPotentialFlowPredictorConfig: ConvexPotentialFlowPredictor,
     FlowMatchingPredictorConfig: FlowMatchingPredictor,
     NeuralOptimalTransportPredictorConfig: NeuralOptimalTransportPredictor,
     NeuralSplineFlowPredictorConfig: NeuralSplineFlowPredictor,
@@ -57,8 +62,7 @@ _PREDICTOR_BY_CONFIG_TYPE = {
 def count_trainable_parameters(predictor: nn.Module) -> int:
     """Return the number of trainable parameters in a predictor/module."""
     return sum(
-        parameter.numel()
-        for parameter in predictor.parameters()
+        parameter.numel() for parameter in predictor.parameters()
         if parameter.requires_grad
     )
 
@@ -122,9 +126,7 @@ def _copy_config_to_cpu(config: PredictorConfig) -> PredictorConfig:
     raise TypeError(f"Expected a pydantic config, got {type(config)!r}.")
 
 
-def _build_transport_predictor_from_config(
-    config: PredictorConfig,
-) -> nn.Module:
+def _build_transport_predictor_from_config(config: PredictorConfig, ) -> nn.Module:
     cpu_config = _copy_config_to_cpu(config)
     predictor_class = _PREDICTOR_BY_CONFIG_TYPE.get(type(cpu_config))
     if predictor_class is None:

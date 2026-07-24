@@ -35,9 +35,14 @@ Python 3.11+ is expected. Sandbox notebooks live in `notebooks/sandbox/`.
 - `src/trainers/`
   Optimization logic separated from predictor definitions.
   `FlowMatchingTrainer` fits `FlowMatchingPredictor`.
-- `src/calibrators/`
+- `src/conformal/`
+  `TransportBasedConformalPredictor` wraps a trained transport predictor,
+  constructs the configured calibrator, exposes calibrated containment checks,
+  and estimates prediction-region volume from the forward-map Jacobian.
+- `src/conformal/calibrators/`
   Scalarization plus conformal thresholding. Current calibrators include
-  norm-based and local elliptic/Mahalanobis calibration.
+  norm-based, local elliptic/Mahalanobis, and analytic Gaussian-baseline
+  calibration.
 - `src/configs/`
   Pydantic config objects for datasets, predictors, trainers, and calibrators.
 
@@ -45,16 +50,19 @@ Python 3.11+ is expected. Sandbox notebooks live in `notebooks/sandbox/`.
 
 1. Build a dataset config and dataset.
 2. Call `dataset.get_splits()` to obtain train, calibration, and test data.
-3. Convert the train split with `make_xy_dataloader(...)`.
+3. Convert the train and calibration splits with `make_xy_dataloader(...)`.
 4. Build a predictor, for example `FlowMatchingPredictor`.
 5. Train it with the matching trainer, for example `FlowMatchingTrainer`.
-6. Compute calibration scores:
-   `z_cal = predictor.multivariate_score(x_cal, y_cal)`.
-7. Fit a calibrator with `calibrator.fit(x_cal, z_cal, alpha)`.
-8. Compute test scores:
-   `z_test = predictor.multivariate_score(x_test, y_test)`.
-9. Check inclusion with `calibrator.contains(x_test, z_test)`.
-10. Report coverage, size or volume proxy, and runtime.
+6. Wrap the trained predictor with `TransportBasedConformalPredictor`,
+   supplying a `TransportBasedConformalPredictorConfig` containing the desired
+   `coverage_mass` and calibrator config.
+7. Call `conformal_predictor.fit(calibration_dataloader)` to compute pullback
+   scores batch-by-batch and calibrate the region.
+8. Check test inclusion with
+   `conformal_predictor.contains(x_test, y_test)`.
+9. Estimate target-space region volumes, when the calibrator defines a
+   Euclidean latent ball, with `conformal_predictor.volume(x_test)`.
+10. Report coverage, region volume, and runtime.
 
 ## Score And Calibration Convention
 
@@ -71,4 +79,6 @@ z = y - f(x)
 ```
 
 Calibrators then map `z` to a scalar score and apply the split-conformal
-finite-sample quantile from `src/calibrators/quantile.py`.
+finite-sample order statistic from
+`src/conformal/calibrators/quantile.py`. Coverage is consistently expressed as
+`coverage_mass` throughout the conformal API.
