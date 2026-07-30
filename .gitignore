@@ -1,7 +1,7 @@
 weights/*
 figures/*
 data/*
-
+logs/*
 # Metrics, serialized Data Frames
 *.feather
 
