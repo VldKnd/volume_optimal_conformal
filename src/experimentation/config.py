@@ -7,9 +7,13 @@ from typing import Annotated, Any
 import yaml
 from pydantic import BaseModel, Field
 
-from configs.conformal import TransportBasedConformalPredictorConfig
+from configs.conformal import (
+    ResidualConformalPredictorConfig,
+    TransportBasedConformalPredictorConfig,
+)
 from configs.datasets import real as real_dataset_configs
 from configs.datasets import synthetic as dataset_configs
+from configs.predictors import RandomForestPredictorConfig
 from configs.predictors import rearranged_transport as rearrangement_configs
 from configs.predictors import transport as predictor_configs
 
@@ -32,11 +36,18 @@ DatasetConfig = Annotated[
 ]
 
 PredictorConfig = Annotated[
-    predictor_configs.ConvexPotentialFlowPredictorConfig
+    RandomForestPredictorConfig
+    | predictor_configs.ConvexPotentialFlowPredictorConfig
     | predictor_configs.FlowMatchingPredictorConfig
     | predictor_configs.NeuralOptimalTransportPredictorConfig
     | predictor_configs.NeuralSplineFlowPredictorConfig
     | predictor_configs.NormalizingFlowPredictorConfig,
+    Field(discriminator="type"),
+]
+
+ConformalConfig = Annotated[
+    ResidualConformalPredictorConfig
+    | TransportBasedConformalPredictorConfig,
     Field(discriminator="type"),
 ]
 
@@ -65,13 +76,14 @@ class ExperimentConfig(BaseModel):
     rearrangement_checkpoint: Path | None = None
     supervised_rearrangement: bool = False
 
-    conformal_config: TransportBasedConformalPredictorConfig
+    conformal_config: ConformalConfig
     conformal_checkpoint: Path | None = None
 
     train_batch_size: int = Field(default=256, gt=0)
     calibration_batch_size: int = Field(default=512, gt=0)
     test_batch_size: int = Field(default=512, gt=0)
     compute_volume: bool = False
+    metrics_verbose: bool = True
 
     @property
     def run_directory(self) -> Path:

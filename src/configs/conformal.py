@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import AliasChoices, BaseModel, Field
 
@@ -26,6 +26,8 @@ class TransportBasedConformalPredictorConfig(BaseModel):
     region and is used consistently by the predictor and calibrator.
     """
 
+    type: Literal["transport_based"] = "transport_based"
+
     coverage_mass: float = Field(
         default=0.9,
         gt=0.0,
@@ -51,6 +53,8 @@ class TransportBasedConformalPredictorConfig(BaseModel):
 
 class ResidualConformalPredictorConfig(BaseModel):
     """Configuration for conformalizing regression residuals."""
+
+    type: Literal["residual"] = "residual"
 
     coverage_mass: float = Field(
         default=0.9,

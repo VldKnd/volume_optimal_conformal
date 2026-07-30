@@ -9,7 +9,7 @@ def log_volume(
     dataloader: DataLoader,
     conformal_predictor: ConformalPredictor,
 ) -> tuple[float, float]:
-    """Return the mean and population standard deviation of log-volume."""
+    """Return mean and population std of log-volume per output dimension."""
     log_volumes = []
 
     for x_batch, _ in dataloader:
@@ -24,7 +24,7 @@ def log_volume(
             raise ValueError(
                 "estimate_log_volume must return one value per observation."
             )
-        log_volumes.append(batch_log_volumes)
+        log_volumes.append(batch_log_volumes / conformal_predictor.y_dim)
 
     if not log_volumes:
         raise ValueError("Validation dataloader must not be empty.")

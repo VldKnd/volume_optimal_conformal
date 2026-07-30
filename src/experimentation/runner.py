@@ -3,27 +3,39 @@ from __future__ import annotations
 import json
 import math
 import random
+import time
 from pathlib import Path
 
 import numpy as np
 import torch
 
-from configs.conformal import TransportBasedConformalPredictorConfig
+from configs.conformal import ResidualConformalPredictorConfig
+from configs.trainers import RandomForestTrainerConfig
 from configs.trainers import rearranged_transport as rearranged_configs
 from configs.trainers import transport as trainer_configs
-from conformal import TransportBasedConformalPredictor
+from conformal import (
+    ResidualConformalPredictor,
+    TransportBasedConformalPredictor,
+)
 from data.datasets import real as real_datasets
 from data.datasets import synthetic as datasets
 from data.loaders import make_xy_dataloader
+from evaluation import (
+    excess_coverage_risk_from_data,
+    log_volume,
+)
+from evaluation.wsc import wsc_unbiased
 from experimentation.config import ExperimentConfig
+from predictors import RandomForestPredictor
 from predictors import rearranged_transport as rearranged_predictors
 from predictors import transport as transport_predictors
+from trainers import RandomForestTrainer
 from trainers import rearranged_transport as rearranged_trainers
 from trainers import transport as transport_trainers
 
 
 class ExperimentRunner:
-    """Run base transport -> optional rearrangement -> conformal calibration."""
+    """Train, calibrate, evaluate, and save one configured experiment."""
 
     def __init__(self, config: ExperimentConfig):
         self.config = config
@@ -34,13 +46,17 @@ class ExperimentRunner:
         self.rearrangement = None
         self.conformal_predictor = None
         self.histories: dict[str, list[dict]] = {}
-        self.metrics: dict[str, float | int] = {}
+        self.metrics: dict[str, object] = {}
 
     def run(self) -> ExperimentRunner:
         config = self.config
         predictor_config = config.predictor_config
 
-        if predictor_config.type == "convex_potential_flow":
+        if predictor_config.type == "random_forest":
+            predictor_class = RandomForestPredictor
+            trainer_class = RandomForestTrainer
+            trainer_config_class = RandomForestTrainerConfig
+        elif predictor_config.type == "convex_potential_flow":
             predictor_class = transport_predictors.ConvexPotentialFlowPredictor
             trainer_class = transport_trainers.ConvexPotentialFlowTrainer
             trainer_config_class = (trainer_configs.ConvexPotentialFlowTrainerConfig)
@@ -61,12 +77,10 @@ class ExperimentRunner:
             trainer_class = transport_trainers.NormalizingFlowTrainer
             trainer_config_class = trainer_configs.NormalizingFlowTrainerConfig
 
-        trainer_config = None
-        if config.trainer_config is not None:
-            trainer_data = config.trainer_config
-            if hasattr(trainer_data, "model_dump"):
-                trainer_data = trainer_data.model_dump()
-            trainer_config = trainer_config_class.model_validate(trainer_data)
+        trainer_data = config.trainer_config
+        if hasattr(trainer_data, "model_dump"):
+            trainer_data = trainer_data.model_dump()
+        trainer_config = trainer_config_class.model_validate(trainer_data or {})
 
         rearrangement_class = None
         rearrangement_trainer_class = None
@@ -101,13 +115,12 @@ class ExperimentRunner:
                         rearranged_configs.RearrangedTransportTrainerConfig
                     )
 
-            if config.rearrangement_trainer_config is not None:
-                trainer_data = config.rearrangement_trainer_config
-                if hasattr(trainer_data, "model_dump"):
-                    trainer_data = trainer_data.model_dump()
-                rearrangement_trainer_config = (
-                    rearrangement_trainer_config_class.model_validate(trainer_data)
-                )
+            trainer_data = config.rearrangement_trainer_config
+            if hasattr(trainer_data, "model_dump"):
+                trainer_data = trainer_data.model_dump()
+            rearrangement_trainer_config = (
+                rearrangement_trainer_config_class.model_validate(trainer_data or {})
+            )
 
         dataset_config = config.dataset_config
         if (
@@ -117,6 +130,11 @@ class ExperimentRunner:
             raise ValueError("Predictor and dataset dimensions must match.")
 
         if config.rearrangement_config is not None:
+            if predictor_config.type == "random_forest":
+                raise ValueError(
+                    "A rearrangement layer requires a transport predictor."
+                )
+
             rearrangement_config = config.rearrangement_config
             if (
                 rearrangement_config.x_dim != predictor_config.x_dim
@@ -143,6 +161,16 @@ class ExperimentRunner:
                 raise ValueError(
                     "Fixed rearrangement and conformal coverage masses must match."
                 )
+
+        residual_conformal = isinstance(
+            config.conformal_config,
+            ResidualConformalPredictorConfig,
+        )
+        if residual_conformal != (predictor_config.type == "random_forest"):
+            raise ValueError(
+                "Random-forest regression requires residual conformal prediction; "
+                "transport predictors require transport-based conformal prediction."
+            )
 
         self.run_directory.mkdir(parents=True, exist_ok=True)
         self._write_json(
@@ -198,19 +226,19 @@ class ExperimentRunner:
         )
 
         base_trainer = None
-        self.predictor = predictor_class(predictor_config)
         if config.predictor_checkpoint is not None:
-            checkpoint = torch.load(
-                config.predictor_checkpoint,
+            self.predictor = predictor_class.load(
+                str(config.predictor_checkpoint),
                 map_location=predictor_config.device,
-                weights_only=False,
             )
-            self.predictor.load_state_dict(checkpoint["state_dict"])
         else:
+            self.predictor = predictor_class(predictor_config)
             base_trainer = trainer_class(trainer_config)
             self._seed(config.seed)
             base_trainer.fit(self.predictor, train_loader)
-        self.predictor.eval()
+        eval_method = getattr(self.predictor, "eval", None)
+        if callable(eval_method):
+            eval_method()
         self._save_stage("base", self.predictor, base_trainer)
 
         final_predictor = self.predictor
@@ -243,8 +271,14 @@ class ExperimentRunner:
             )
             final_predictor = self.rearrangement
 
+        conformal_class = (
+            ResidualConformalPredictor
+            if residual_conformal else TransportBasedConformalPredictor
+        )
+        conformal_config_class = type(config.conformal_config)
+
         if config.conformal_checkpoint is None:
-            self.conformal_predictor = TransportBasedConformalPredictor(
+            self.conformal_predictor = conformal_class(
                 predictor=final_predictor,
                 config=config.conformal_config,
             )
@@ -255,56 +289,159 @@ class ExperimentRunner:
                 map_location=predictor_config.device,
                 weights_only=False,
             )
-            saved_config = TransportBasedConformalPredictorConfig.model_validate(
-                checkpoint["config"]
-            )
+            saved_config = conformal_config_class.model_validate(checkpoint["config"])
             if saved_config != config.conformal_config:
                 raise ValueError(
                     "Loaded conformal checkpoint has a different configuration."
                 )
-            self.conformal_predictor = TransportBasedConformalPredictor(
+            self.conformal_predictor = conformal_class(
                 predictor=final_predictor,
                 config=saved_config,
             )
             self.conformal_predictor.calibrator = checkpoint["calibrator"]
+            if residual_conformal:
+                self.conformal_predictor.calibration_x = checkpoint["calibration_x"]
+                self.conformal_predictor.calibration_residuals = checkpoint[
+                    "calibration_residuals"]
+                self.conformal_predictor.volume_neighbors = checkpoint[
+                    "volume_neighbors"]
 
         conformal_directory = self.run_directory / "conformal"
         conformal_directory.mkdir(exist_ok=True)
+        conformal_checkpoint = {
+            "config": self.conformal_predictor.config.model_dump(),
+            "calibrator": self.conformal_predictor.calibrator,
+        }
+        if residual_conformal:
+            conformal_checkpoint.update(
+                calibration_x=self.conformal_predictor.calibration_x,
+                calibration_residuals=(self.conformal_predictor.calibration_residuals),
+                volume_neighbors=self.conformal_predictor.volume_neighbors,
+            )
         torch.save(
-            {
-                "config": self.conformal_predictor.config.model_dump(),
-                "calibrator": self.conformal_predictor.calibrator,
-            },
+            conformal_checkpoint,
             conformal_directory / "predictor.pt",
         )
 
-        total = 0
-        contained = 0
-        volumes = []
-        for x_batch, y_batch in test_loader:
-            inside = self.conformal_predictor.contains(x=x_batch, y=y_batch)
-            total += inside.numel()
-            contained += int(inside.sum().item())
-            if config.compute_volume:
-                volumes.append(self.conformal_predictor.volume(x_batch).detach().cpu())
+        metrics_start = time.perf_counter()
+        if config.metrics_verbose:
+            print("[metrics] Computing coverage indicators...", flush=True)
 
-        if total == 0:
+        coverage_start = time.perf_counter()
+        representations = []
+        coverage_indicators = []
+        for x_batch, y_batch in test_loader:
+            with torch.no_grad():
+                inside = self.conformal_predictor.contains(
+                    x_batch,
+                    y_batch,
+                ).detach().reshape(-1)
+            if inside.numel() != x_batch.shape[0]:
+                raise ValueError("contains must return one value per observation.")
+            representations.append(x_batch.detach().cpu())
+            coverage_indicators.append(inside.cpu())
+
+        if not coverage_indicators:
             raise ValueError("The test split is empty.")
 
-        empirical_coverage = contained / total
-        coverage_error = empirical_coverage - self.conformal_predictor.coverage_mass
+        representations = torch.cat(representations)
+        coverage_indicators = torch.cat(coverage_indicators)
+        if config.metrics_verbose:
+            elapsed = time.perf_counter() - coverage_start
+            print(
+                f"[metrics] Coverage indicators completed in {elapsed:.1f}s.",
+                flush=True,
+            )
+
+        marginal_mean = float(coverage_indicators.float().mean())
+        marginal_std = None
+        if config.metrics_verbose:
+            print(
+                f"[metrics] Marginal coverage: {marginal_mean:.4f}.",
+                flush=True,
+            )
+
+        if config.metrics_verbose:
+            print("[metrics] Computing worst-slab coverage...", flush=True)
+        metric_start = time.perf_counter()
+        slab_mean, slab_std = wsc_unbiased(
+            representations=representations.numpy(),
+            coverages=coverage_indicators.numpy(),
+            delta=0.1,
+            M=1_000,
+            test_size=0.75,
+            random_state=config.seed,
+        )
+        if config.metrics_verbose:
+            elapsed = time.perf_counter() - metric_start
+            print(
+                "[metrics] Worst-slab coverage completed in "
+                f"{elapsed:.1f}s: {slab_mean:.4f} ± {slab_std:.4f}.",
+                flush=True,
+            )
+
+        if config.metrics_verbose:
+            print("[metrics] Computing excess coverage risk...", flush=True)
+        metric_start = time.perf_counter()
+        risk_mean, risk_std = excess_coverage_risk_from_data(
+            x=representations.numpy(),
+            coverage_indicators=coverage_indicators.numpy(),
+            target_coverage=self.conformal_predictor.coverage_mass,
+        )
+        if config.metrics_verbose:
+            elapsed = time.perf_counter() - metric_start
+            print(
+                "[metrics] Excess coverage risk completed in "
+                f"{elapsed:.1f}s: {risk_mean:.4f} ± {risk_std:.4f}.",
+                flush=True,
+            )
+
         self.metrics = {
-            "n_test": total,
+            "n_test": splits.test.x.shape[0],
             "target_coverage": self.conformal_predictor.coverage_mass,
-            "empirical_coverage": empirical_coverage,
-            "coverage_error": coverage_error,
+            "marginal_coverage": {
+                "mean": marginal_mean,
+                "std": marginal_std,
+            },
+            "worst_slab_coverage": {
+                "mean": slab_mean,
+                "std": slab_std,
+            },
+            "excess_coverage_risk": {
+                "mean": risk_mean,
+                "std": risk_std,
+            },
         }
-        if volumes:
-            volume = torch.cat(volumes)
-            self.metrics["mean_volume"] = float(volume.mean())
-            self.metrics["std_volume"] = float(volume.std(unbiased=False))
+        if config.compute_volume:
+            if config.metrics_verbose:
+                print(
+                    "[metrics] Computing log-volume per dimension...",
+                    flush=True,
+                )
+            metric_start = time.perf_counter()
+            volume_mean, volume_std = log_volume(
+                test_loader,
+                self.conformal_predictor,
+            )
+            self.metrics["log_volume_per_dimension"] = {
+                "mean": volume_mean,
+                "std": volume_std,
+            }
+            if config.metrics_verbose:
+                elapsed = time.perf_counter() - metric_start
+                print(
+                    "[metrics] Log-volume per dimension completed in "
+                    f"{elapsed:.1f}s: {volume_mean:.4f} ± {volume_std:.4f}.",
+                    flush=True,
+                )
 
         self._write_json(self.run_directory / "metrics.json", self.metrics)
+        if config.metrics_verbose:
+            elapsed = time.perf_counter() - metrics_start
+            print(
+                f"[metrics] All metrics completed in {elapsed:.1f}s.",
+                flush=True,
+            )
         return self
 
     def _save_stage(self, name, predictor, trainer) -> None:

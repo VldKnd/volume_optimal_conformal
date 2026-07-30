@@ -117,14 +117,39 @@ def excess_coverage_risk(
     if not coverage_indicators:
         raise ValueError("Validation dataloader must not be empty.")
 
-    x = torch.cat(x_values).numpy()
-    z = torch.cat(coverage_indicators).numpy()
+    return excess_coverage_risk_from_data(
+        x=torch.cat(x_values).numpy(),
+        coverage_indicators=torch.cat(coverage_indicators).numpy(),
+        target_coverage=conformal_predictor.coverage_mass,
+        number_of_folds=number_of_folds,
+        scoring_rule=scoring_rule,
+        classifier_factory=classifier_factory,
+    )
+
+
+def excess_coverage_risk_from_data(
+    x: np.ndarray,
+    coverage_indicators: np.ndarray,
+    target_coverage: float,
+    number_of_folds: int = 5,
+    scoring_rule: ScoringRule | None = None,
+    classifier_factory: ClassifierFactory | None = None,
+) -> tuple[float, float]:
+    """Compute cross-fitted excess coverage risk from precomputed labels."""
+    x = np.asarray(x)
+    z = np.asarray(coverage_indicators).reshape(-1)
+    if x.ndim != 2 or x.shape[0] != z.shape[0]:
+        raise ValueError(
+            "x must have shape (n, dimension) and coverage_indicators shape (n,)."
+        )
+    if x.shape[0] == 0:
+        raise ValueError("At least one observation is required.")
     if number_of_folds < 2 or number_of_folds > x.shape[0]:
         raise ValueError(
             "number_of_folds must be between 2 and the number of observations."
         )
 
-    target_coverage = float(conformal_predictor.coverage_mass)
+    target_coverage = float(target_coverage)
     scoring_rule = _absolute_error if scoring_rule is None else scoring_rule
     classifier_factory = (
         _make_lightgbm_classifier if classifier_factory is None else classifier_factory

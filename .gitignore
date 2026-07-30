@@ -28,6 +28,7 @@ conformal_results*/
 notebooks/sandbox.ipynb
 experiments/
 experiments*/
+benchmark/results/
 
 # Model weights
 *.pth
