@@ -12,6 +12,7 @@ from configs.conformal import TransportBasedConformalPredictorConfig
 from configs.trainers import rearranged_transport as rearranged_configs
 from configs.trainers import transport as trainer_configs
 from conformal import TransportBasedConformalPredictor
+from data.datasets import real as real_datasets
 from data.datasets import synthetic as datasets
 from data.loaders import make_xy_dataloader
 from experimentation.config import ExperimentConfig
@@ -150,7 +151,25 @@ class ExperimentRunner:
         )
         self._seed(config.seed)
 
-        if dataset_config.type == "banana":
+        if dataset_config.type == "atp1d":
+            self.dataset = real_datasets.ATP1dDataset(dataset_config)
+        elif dataset_config.type == "atp7d":
+            self.dataset = real_datasets.ATP7dDataset(dataset_config)
+        elif dataset_config.type == "bio":
+            self.dataset = real_datasets.BioDataset(dataset_config)
+        elif dataset_config.type == "blog":
+            self.dataset = real_datasets.BlogDataset(dataset_config)
+        elif dataset_config.type == "scm1d":
+            self.dataset = real_datasets.SCM1dDataset(dataset_config)
+        elif dataset_config.type == "scm20d":
+            self.dataset = real_datasets.SCM20dDataset(dataset_config)
+        elif dataset_config.type == "rf1":
+            self.dataset = real_datasets.RF1Dataset(dataset_config)
+        elif dataset_config.type == "rf2":
+            self.dataset = real_datasets.RF2Dataset(dataset_config)
+        elif dataset_config.type == "sgemm":
+            self.dataset = real_datasets.SGEMMDataset(dataset_config)
+        elif dataset_config.type == "banana":
             self.dataset = datasets.BananaDataset(dataset_config)
         elif dataset_config.type == "bimodal_gaussian":
             self.dataset = datasets.BimodalGaussianDataset(dataset_config)

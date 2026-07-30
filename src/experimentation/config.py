@@ -8,12 +8,22 @@ import yaml
 from pydantic import BaseModel, Field
 
 from configs.conformal import TransportBasedConformalPredictorConfig
+from configs.datasets import real as real_dataset_configs
 from configs.datasets import synthetic as dataset_configs
 from configs.predictors import rearranged_transport as rearrangement_configs
 from configs.predictors import transport as predictor_configs
 
 DatasetConfig = Annotated[
-    dataset_configs.BananaDatasetConfig
+    real_dataset_configs.ATP1dDatasetConfig
+    | real_dataset_configs.ATP7dDatasetConfig
+    | real_dataset_configs.BioDatasetConfig
+    | real_dataset_configs.BlogDatasetConfig
+    | real_dataset_configs.RF1DatasetConfig
+    | real_dataset_configs.RF2DatasetConfig
+    | real_dataset_configs.SCM1dDatasetConfig
+    | real_dataset_configs.SCM20dDatasetConfig
+    | real_dataset_configs.SGEMMDatasetConfig
+    | dataset_configs.BananaDatasetConfig
     | dataset_configs.BimodalGaussianDatasetConfig
     | dataset_configs.GaussianDatasetConfig
     | dataset_configs.SinusoidalTransportDatasetConfig
