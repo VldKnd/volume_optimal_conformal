@@ -6,6 +6,7 @@ The SCM20D benchmark contains one YAML file per method and random seed:
 - `residual_rf_local_otcp`
 - `residual_rf_elliptic`
 - `transport_neural_ot_l2`
+- `transport_neural_ot_rearranged_l2`
 - `transport_realnvp_l2`
 - `transport_realnvp_rearranged_l2`
 - `transport_cpflow_l2`
@@ -19,6 +20,7 @@ from experimentation import ExperimentRunner, load_experiment_config
 
 config = load_experiment_config(
     "benchmark/configurations/scm20d/"
+    "comparisont_with_residuals/"
     "residual_rf_global_otcp/seed_00.yaml"
 )
 ExperimentRunner(config).run()
