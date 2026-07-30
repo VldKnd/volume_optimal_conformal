@@ -26,6 +26,20 @@ config = load_experiment_config(
 ExperimentRunner(config).run()
 ```
 
+Run all configurations sequentially from the repository root with:
+
+```bash
+uv run python scripts/run_benchmark.py \
+  benchmark/configurations/scm20d
+```
+
+To run only one method, pass its configuration directory:
+
+```bash
+uv run python scripts/run_benchmark.py \
+  benchmark/configurations/scm20d/comparisont_with_residuals/transport_realnvp_l2
+```
+
 Each run writes its configuration, model and trainer checkpoints, histories,
 conformal checkpoint, and `metrics.json` under:
 
