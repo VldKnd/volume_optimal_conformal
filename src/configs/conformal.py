@@ -49,7 +49,7 @@ class TransportBasedConformalPredictorConfig(BaseModel):
     volume_seed: int = 0
 
 
-class ResidualConformalPredictionConfig(BaseModel):
+class ResidualConformalPredictorConfig(BaseModel):
     """Configuration for conformalizing regression residuals."""
 
     coverage_mass: float = Field(

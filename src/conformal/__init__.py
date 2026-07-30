@@ -1,15 +1,17 @@
 from configs.conformal import (
-    ResidualConformalPredictionConfig,
+    ResidualConformalPredictorConfig,
     TransportBasedConformalPredictorConfig,
 )
-from conformal.residual_conformal_prediction import ResidualConformalPrediction
+from conformal.base import ConformalPredictor
+from conformal.residual_conformal_predictor import ResidualConformalPredictor
 from conformal.transport_based_conformal_predictor import (
     TransportBasedConformalPredictor,
 )
 
 __all__ = [
-    "ResidualConformalPrediction",
-    "ResidualConformalPredictionConfig",
+    "ConformalPredictor",
+    "ResidualConformalPredictor",
+    "ResidualConformalPredictorConfig",
     "TransportBasedConformalPredictor",
     "TransportBasedConformalPredictorConfig",
 ]

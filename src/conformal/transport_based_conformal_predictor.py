@@ -8,6 +8,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from configs.conformal import TransportBasedConformalPredictorConfig
+from conformal.base import ConformalPredictor
 from conformal.calibrators.base import BaseCalibrator
 from conformal.calibrators.factory import make_calibrator
 from conformal.calibrators.no_calibrator import NoCalibrator
@@ -17,7 +18,7 @@ from predictors.rearranged_transport.amortized_rearranged_transport import (
 )
 
 
-class TransportBasedConformalPredictor:
+class TransportBasedConformalPredictor(ConformalPredictor):
     """Calibrated prediction-region wrapper around a transport predictor.
 
     The base predictor maps latent scores ``u`` to observations ``y``. The
@@ -51,18 +52,6 @@ class TransportBasedConformalPredictor:
 
         if isinstance(self.calibrator, NoCalibrator):
             self._initialize_analytic_calibrator()
-
-    @property
-    def coverage_mass(self) -> float:
-        return self.config.coverage_mass
-
-    @property
-    def threshold(self) -> torch.Tensor | None:
-        return getattr(self.calibrator, "threshold", None)
-
-    @property
-    def is_calibrated(self) -> bool:
-        return self.threshold is not None
 
     def calibrate(
         self,
@@ -131,13 +120,6 @@ class TransportBasedConformalPredictor:
         )
         return self
 
-    def fit(
-        self,
-        dataloader: DataLoader,
-    ) -> Self:
-        """Alias for :meth:`calibrate`."""
-        return self.calibrate(dataloader=dataloader)
-
     def pushforward(
         self,
         x: torch.Tensor,
@@ -172,31 +154,6 @@ class TransportBasedConformalPredictor:
         y: torch.Tensor,
     ) -> torch.Tensor:
         return self.pullback(x=x, y=y)
-
-    def scalar_score(
-        self,
-        x: torch.Tensor,
-        y: torch.Tensor,
-    ) -> torch.Tensor:
-        scores = self.pullback(x=x, y=y)
-        return self.calibrator.scalar_score(
-            x=self._to_device(x),
-            scores=scores,
-        )
-
-    def contains(
-        self,
-        x: torch.Tensor,
-        y: torch.Tensor,
-    ) -> torch.Tensor:
-        """Return whether each observation lies in its conformal region."""
-        self._require_calibrated()
-        with torch.no_grad():
-            scores = self.pullback(x=x, y=y)
-            return self.calibrator.contains(
-                x=self._to_device(x),
-                scores=scores,
-            )
 
     def log_det(
         self,
@@ -337,50 +294,6 @@ class TransportBasedConformalPredictor:
             math.lgamma(0.5 * self.y_dim + 1.0)
         )
         return (log_ball_volume + log_integral - math.log(number_of_samples))
-
-    def estimate_volume(
-        self,
-        x: torch.Tensor,
-        number_of_samples: int | None = None,
-        batch_size: int | None = None,
-        seed: int | None = None,
-    ) -> torch.Tensor:
-        return torch.exp(
-            self.estimate_log_volume(
-                x=x,
-                number_of_samples=number_of_samples,
-                batch_size=batch_size,
-                seed=seed,
-            )
-        )
-
-    def log_volume(
-        self,
-        x: torch.Tensor,
-        number_of_samples: int | None = None,
-        batch_size: int | None = None,
-        seed: int | None = None,
-    ) -> torch.Tensor:
-        return self.estimate_log_volume(
-            x=x,
-            number_of_samples=number_of_samples,
-            batch_size=batch_size,
-            seed=seed,
-        )
-
-    def volume(
-        self,
-        x: torch.Tensor,
-        number_of_samples: int | None = None,
-        batch_size: int | None = None,
-        seed: int | None = None,
-    ) -> torch.Tensor:
-        return self.estimate_volume(
-            x=x,
-            number_of_samples=number_of_samples,
-            batch_size=batch_size,
-            seed=seed,
-        )
 
     def _initialize_analytic_calibrator(self) -> None:
         x = torch.empty(
@@ -556,18 +469,6 @@ class TransportBasedConformalPredictor:
             raise ValueError(
                 "predictor.pullback must return scores with shape "
                 f"{expected_shape}, got {tuple(scores.shape)}."
-            )
-
-    def _set_predictor_eval(self) -> None:
-        eval_method = getattr(self.predictor, "eval", None)
-        if callable(eval_method):
-            eval_method()
-
-    def _require_calibrated(self) -> None:
-        if not self.is_calibrated:
-            raise RuntimeError(
-                "TransportBasedConformalPredictor must be calibrated before "
-                "this operation."
             )
 
     @staticmethod

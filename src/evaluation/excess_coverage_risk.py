@@ -6,6 +6,8 @@ import torch
 from sklearn.model_selection import StratifiedKFold
 from torch.utils.data import DataLoader
 
+from conformal.base import ConformalPredictor
+
 ScoringRule = Callable[[np.ndarray, np.ndarray], np.ndarray]
 ClassifierFactory = Callable[[], Any]
 
@@ -79,7 +81,7 @@ def _coverage_probability(
 
 def excess_coverage_risk(
     dataloader: DataLoader,
-    conformal_prediction: Any,
+    conformal_predictor: ConformalPredictor,
     number_of_folds: int = 5,
     scoring_rule: ScoringRule | None = None,
     classifier_factory: ClassifierFactory | None = None,
@@ -98,7 +100,7 @@ def excess_coverage_risk(
 
     for x_batch, y_batch in dataloader:
         with torch.no_grad():
-            inside = conformal_prediction.contains(x_batch, y_batch)
+            inside = conformal_predictor.contains(x_batch, y_batch)
 
         inside = inside.detach().reshape(-1)
         if inside.numel() != x_batch.shape[0]:
@@ -122,7 +124,7 @@ def excess_coverage_risk(
             "number_of_folds must be between 2 and the number of observations."
         )
 
-    target_coverage = float(conformal_prediction.coverage_mass)
+    target_coverage = float(conformal_predictor.coverage_mass)
     scoring_rule = _absolute_error if scoring_rule is None else scoring_rule
     classifier_factory = (
         _make_lightgbm_classifier if classifier_factory is None else classifier_factory

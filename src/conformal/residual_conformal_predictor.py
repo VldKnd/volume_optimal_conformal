@@ -6,18 +6,19 @@ import torch
 from sklearn.neighbors import NearestNeighbors
 from torch.utils.data import DataLoader
 
-from configs.conformal import ResidualConformalPredictionConfig
+from configs.conformal import ResidualConformalPredictorConfig
+from conformal.base import ConformalPredictor
 from conformal.calibrators.elliptic_calibrator import EllipticCalibrator
 from conformal.calibrators.factory import make_calibrator
 
 
-class ResidualConformalPrediction:
+class ResidualConformalPredictor(ConformalPredictor):
     """Conformal prediction regions built from regression residuals."""
 
     def __init__(
         self,
         predictor: Any,
-        config: ResidualConformalPredictionConfig,
+        config: ResidualConformalPredictorConfig,
     ):
         self.predictor = predictor
         self.base_predictor = predictor
@@ -32,18 +33,6 @@ class ResidualConformalPrediction:
         self.calibration_x: torch.Tensor | None = None
         self.calibration_residuals: torch.Tensor | None = None
         self.volume_neighbors: NearestNeighbors | None = None
-
-    @property
-    def coverage_mass(self) -> float:
-        return self.config.coverage_mass
-
-    @property
-    def threshold(self) -> torch.Tensor | None:
-        return self.calibrator.threshold
-
-    @property
-    def is_calibrated(self) -> bool:
-        return self.threshold is not None
 
     def calibrate(self, dataloader: DataLoader) -> Self:
         """Fit the calibrator from batches of calibration observations."""
@@ -83,9 +72,6 @@ class ResidualConformalPrediction:
         self.volume_neighbors.fit(x.numpy())
         return self
 
-    def fit(self, dataloader: DataLoader) -> Self:
-        return self.calibrate(dataloader)
-
     def multivariate_score(
         self,
         x: torch.Tensor,
@@ -105,31 +91,6 @@ class ResidualConformalPrediction:
                 f"{expected_shape}, got {tuple(residuals.shape)}."
             )
         return residuals
-
-    def scalar_score(
-        self,
-        x: torch.Tensor,
-        y: torch.Tensor,
-    ) -> torch.Tensor:
-        residuals = self.multivariate_score(x, y)
-        return self.calibrator.scalar_score(
-            x=x.to(device=residuals.device, dtype=residuals.dtype),
-            scores=residuals,
-        )
-
-    def contains(
-        self,
-        x: torch.Tensor,
-        y: torch.Tensor,
-    ) -> torch.Tensor:
-        """Return whether each observation belongs to its prediction region."""
-        self._require_calibrated()
-        with torch.no_grad():
-            residuals = self.multivariate_score(x, y)
-            return self.calibrator.contains(
-                x=x.to(device=residuals.device, dtype=residuals.dtype),
-                scores=residuals,
-            )
 
     def estimate_log_volume(
         self,
@@ -224,20 +185,6 @@ class ResidualConformalPrediction:
             dtype=x.dtype,
         )
 
-    def estimate_volume(
-        self,
-        x: torch.Tensor,
-        number_of_samples: int | None = None,
-        seed: int | None = None,
-    ) -> torch.Tensor:
-        return torch.exp(
-            self.estimate_log_volume(
-                x=x,
-                number_of_samples=number_of_samples,
-                seed=seed,
-            )
-        )
-
     def _prepare_x(self, x: torch.Tensor) -> torch.Tensor:
         if not isinstance(x, torch.Tensor):
             raise TypeError("x must be a torch tensor.")
@@ -262,12 +209,3 @@ class ResidualConformalPrediction:
             )
         if x.shape[0] != y.shape[0]:
             raise ValueError("x and y must have the same batch size.")
-
-    def _set_predictor_eval(self) -> None:
-        eval_method = getattr(self.predictor, "eval", None)
-        if callable(eval_method):
-            eval_method()
-
-    def _require_calibrated(self) -> None:
-        if not self.is_calibrated:
-            raise RuntimeError("ResidualConformalPrediction must be calibrated first.")

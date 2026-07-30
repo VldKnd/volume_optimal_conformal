@@ -1,21 +1,20 @@
-from typing import Any
-
 import torch
 from torch.utils.data import DataLoader
 
+from conformal.base import ConformalPredictor
 from evaluation.wsc import wsc_unbiased
 
 
 def log_volume(
     dataloader: DataLoader,
-    conformal_prediction: Any,
+    conformal_predictor: ConformalPredictor,
 ) -> tuple[float, float]:
     """Return the mean and population standard deviation of log-volume."""
     log_volumes = []
 
     for x_batch, _ in dataloader:
         with torch.no_grad():
-            batch_log_volumes = conformal_prediction.estimate_log_volume(x_batch)
+            batch_log_volumes = conformal_predictor.estimate_log_volume(x_batch)
 
         batch_log_volumes = batch_log_volumes.detach().reshape(-1).to(
             device="cpu",
@@ -39,7 +38,7 @@ def log_volume(
 
 def marginal_coverage(
     dataloader: DataLoader,
-    conformal_prediction: Any,
+    conformal_predictor: ConformalPredictor,
 ) -> tuple[float, None]:
     """Return empirical marginal coverage and no dispersion estimate."""
     covered = 0
@@ -47,7 +46,7 @@ def marginal_coverage(
 
     for x_batch, y_batch in dataloader:
         with torch.no_grad():
-            inside = conformal_prediction.contains(x_batch, y_batch)
+            inside = conformal_predictor.contains(x_batch, y_batch)
 
         inside = inside.detach().reshape(-1)
         if inside.numel() != x_batch.shape[0]:
@@ -63,7 +62,7 @@ def marginal_coverage(
 
 def worst_slab_coverage(
     dataloader: DataLoader,
-    conformal_prediction: Any,
+    conformal_predictor: ConformalPredictor,
     delta: float = 0.1,
     number_of_directions: int = 1_000,
     test_size: float = 0.75,
@@ -75,7 +74,7 @@ def worst_slab_coverage(
 
     for x_batch, y_batch in dataloader:
         with torch.no_grad():
-            inside = conformal_prediction.contains(x_batch, y_batch)
+            inside = conformal_predictor.contains(x_batch, y_batch)
 
         inside = inside.detach().reshape(-1)
         if inside.numel() != x_batch.shape[0]:
