@@ -80,6 +80,7 @@ class ExperimentConfig(BaseModel):
     conformal_checkpoint: Path | None = None
 
     train_batch_size: int = Field(default=256, gt=0)
+    rearrangement_train_batch_size: int | None = Field(default=None, gt=0)
     calibration_batch_size: int = Field(default=512, gt=0)
     test_batch_size: int = Field(default=512, gt=0)
     compute_volume: bool = False

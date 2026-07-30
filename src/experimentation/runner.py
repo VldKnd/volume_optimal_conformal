@@ -261,8 +261,18 @@ class ExperimentRunner:
                 rearrangement_trainer = rearrangement_trainer_class(
                     rearrangement_trainer_config
                 )
+                rearrangement_train_loader = make_xy_dataloader(
+                    splits.train,
+                    batch_size=(
+                        config.rearrangement_train_batch_size or config.train_batch_size
+                    ),
+                    shuffle=True,
+                )
                 self._seed(config.seed)
-                rearrangement_trainer.fit(self.rearrangement, train_loader)
+                rearrangement_trainer.fit(
+                    self.rearrangement,
+                    rearrangement_train_loader,
+                )
             self.rearrangement.eval()
             self._save_stage(
                 "rearrangement",
