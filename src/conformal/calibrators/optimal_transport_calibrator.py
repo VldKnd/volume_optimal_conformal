@@ -173,9 +173,7 @@ class LocalOTCPCalibrator(BaseCalibrator):
             dimension=scores.shape[1],
             seed=self.config.seed,
         )
-        self.neighbors = NearestNeighbors(
-            n_neighbors=self.config.n_neighbors,
-        )
+        self.neighbors = NearestNeighbors(n_neighbors=self.config.n_neighbors)
         self.neighbors.fit(x_train)
 
         scalar_scores = self.scalar_score(
@@ -207,25 +205,27 @@ class LocalOTCPCalibrator(BaseCalibrator):
             device="cpu",
             dtype=torch.float64,
         ).numpy()
-        neighbor_indices = self.neighbors.kneighbors(
+        unique_x, group_indices = np.unique(
             x_numpy,
+            axis=0,
+            return_inverse=True,
+        )
+        neighbor_indices = self.neighbors.kneighbors(
+            unique_x,
             return_distance=False,
         )
 
-        scalar_scores = []
-        for score, indices in zip(
-            scores_numpy,
-            neighbor_indices,
-            strict=True,
-        ):
+        scalar_scores = np.empty(scores_numpy.shape[0])
+        for group, indices in enumerate(neighbor_indices):
             local_scores = self.training_scores[indices]
             potential = _rank_potential(self.reference, local_scores)
-            rank = _rank(
-                score[None, :],
+            group_mask = group_indices == group
+            ranks = _rank(
+                scores_numpy[group_mask],
                 self.reference,
                 potential,
-            )[0]
-            scalar_scores.append(np.linalg.norm(rank))
+            )
+            scalar_scores[group_mask] = np.linalg.norm(ranks, axis=1)
 
         return torch.tensor(
             scalar_scores,
