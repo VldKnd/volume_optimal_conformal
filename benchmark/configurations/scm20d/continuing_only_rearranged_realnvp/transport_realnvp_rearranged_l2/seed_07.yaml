@@ -44,10 +44,10 @@ rearrangement_config:
   vector_field_implementation: sparse
   activation: elu
   activation_power: 2.0
-  use_adjoint: true
-  method: dopri5
-  rtol: 0.00001
-  atol: 0.000001
+  use_adjoint: false
+  method: fehlberg2
+  rtol: 0.001
+  atol: 0.0001
   number_of_steps: null
   seed: 7
   device: cuda
