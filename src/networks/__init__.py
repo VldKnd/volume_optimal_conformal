@@ -1,4 +1,6 @@
 from networks.measure_preserving_flows import (
+    ExplicitDerivativeMLP,
+    ExplicitSparseGaussianSkewVectorField,
     MeasurePreservingMLP,
     PReLU,
     SparseGaussianSkewVectorField,
@@ -10,6 +12,8 @@ from networks.standard_scaler import FrozenStandardScaler
 __all__ = [
     "ActNorm",
     "FrozenStandardScaler",
+    "ExplicitDerivativeMLP",
+    "ExplicitSparseGaussianSkewVectorField",
     "MeasurePreservingMLP",
     "MLPVectorField",
     "PReLU",

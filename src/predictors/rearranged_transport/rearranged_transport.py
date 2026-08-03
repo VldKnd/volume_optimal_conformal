@@ -20,8 +20,8 @@ from configs.predictors.transport import (
 from networks.measure_preserving_flows.flow_integration import (
     GaussianSkewFieldFlow,
 )
-from networks.measure_preserving_flows.sparse_skew_symmetric_vector_field import (
-    SparseGaussianSkewVectorField,
+from networks.measure_preserving_flows.explicit_sparse_velocity_field import (
+    ExplicitSparseGaussianSkewVectorField,
 )
 from predictors.rearranged_transport.base import (
     BaseRearrangedTransportPredictor,
@@ -109,7 +109,7 @@ class RearrangedTransportPredictor(
             return None
 
         if self.config.vector_field_implementation == "sparse":
-            return SparseGaussianSkewVectorField(
+            return ExplicitSparseGaussianSkewVectorField(
                 dimension=self.config.y_dim,
                 context_dimension=self._rearrangement_context_dimension(),
                 hidden_dimension=self.config.hidden_dimension,

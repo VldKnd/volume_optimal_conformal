@@ -1,6 +1,10 @@
 from networks.measure_preserving_flows.dense_skew_symmetric_vector_field import (
     DenseGaussianSkewVectorField,
 )
+from networks.measure_preserving_flows.explicit_sparse_velocity_field import (
+    ExplicitDerivativeMLP,
+    ExplicitSparseGaussianSkewVectorField,
+)
 from networks.measure_preserving_flows.flow_integration import (
     GaussianSkewFieldFlow,
     VectorFieldFlow,
@@ -18,6 +22,8 @@ from networks.measure_preserving_flows.sparse_skew_symmetric_vector_field import
 __all__ = [
     "ActivationName",
     "DenseGaussianSkewVectorField",
+    "ExplicitDerivativeMLP",
+    "ExplicitSparseGaussianSkewVectorField",
     "GaussianSkewFieldFlow",
     "MeasurePreservingMLP",
     "PReLU",

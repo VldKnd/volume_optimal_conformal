@@ -18,8 +18,8 @@ from configs.predictors.transport import (
     NormalizingFlowPredictorConfig,
 )
 from networks.measure_preserving_flows import GaussianSkewFieldFlow
-from networks.measure_preserving_flows.sparse_skew_symmetric_vector_field import (
-    SparseGaussianSkewVectorField,
+from networks.measure_preserving_flows.explicit_sparse_velocity_field import (
+    ExplicitSparseGaussianSkewVectorField,
 )
 from predictors.transport import (
     ConvexPotentialFlowPredictor,
@@ -148,7 +148,7 @@ def _build_rearrangement_flow_from_config(
 
     vector_field = None
     if cpu_config.vector_field_implementation == "sparse":
-        vector_field = SparseGaussianSkewVectorField(
+        vector_field = ExplicitSparseGaussianSkewVectorField(
             dimension=cpu_config.y_dim,
             context_dimension=context_dimension,
             hidden_dimension=cpu_config.hidden_dimension,
