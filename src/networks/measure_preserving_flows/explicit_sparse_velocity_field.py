@@ -123,13 +123,16 @@ class ExplicitDerivativeMLP(MeasurePreservingMLP):
             dim=-1,
         )
         hidden_state_jacobian: torch.Tensor | None = None
-        output_layer = self.net[-1]
+        output_layer = self.net[-2]
+        output_activation = self.net[-1]
 
         if not isinstance(output_layer, nn.Linear):
-            raise TypeError("The final MeasurePreservingMLP layer must be linear.")
+            raise TypeError(
+                "The penultimate MeasurePreservingMLP layer must be linear."
+            )
 
         for layer_index, layer in enumerate(self.net):
-            if layer_index == len(self.net) - 1:
+            if layer_index == len(self.net) - 2:
                 break
 
             if isinstance(layer, nn.Linear):
@@ -167,18 +170,24 @@ class ExplicitDerivativeMLP(MeasurePreservingMLP):
         if hidden_state_jacobian is None:
             raise RuntimeError("The MLP does not contain a hidden linear layer.")
 
-        output = output_layer(value)
+        output_pre_activation = output_layer(value)
+        output = output_activation(output_pre_activation)
+        output_activation_derivative = _activation_derivative(
+            activation=output_activation,
+            value=output_pre_activation,
+            activated_value=output,
+        )
         output_weight = output_layer.weight.transpose(0, 1)
         left_derivatives = torch.einsum(
             "...he,he->...e",
             hidden_state_jacobian[..., :-1],
             output_weight,
-        )
+        ) * output_activation_derivative
         right_derivatives = torch.einsum(
             "...he,he->...e",
             hidden_state_jacobian[..., 1:],
             output_weight,
-        )
+        ) * output_activation_derivative
         return output, left_derivatives, right_derivatives
 
 

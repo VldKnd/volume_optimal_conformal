@@ -33,6 +33,8 @@ class ExplicitSparseVelocityFieldSmokeTest(unittest.TestCase):
         }
         reference = SparseGaussianSkewVectorField(**field_kwargs).double()
         explicit = ExplicitSparseGaussianSkewVectorField(**field_kwargs).double()
+        self.assertIsInstance(reference.network.net[-1], torch.nn.Tanh)
+        self.assertIsInstance(explicit.network.net[-1], torch.nn.Tanh)
 
         generator = torch.Generator().manual_seed(731)
         with torch.no_grad():
