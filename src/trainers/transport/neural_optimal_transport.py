@@ -99,7 +99,7 @@ class NeuralOptimalTransportTrainer(BaseTrainer):
                 optimizer.zero_grad()
                 loss.backward()
 
-                torch.nn.utils.clip_grad_norm_(
+                gradient_norm = torch.nn.utils.clip_grad_norm_(
                     predictor.potential_network.parameters(),
                     max_norm=self.config.grad_clip_norm,
                 )
@@ -110,11 +110,22 @@ class NeuralOptimalTransportTrainer(BaseTrainer):
                 if scheduler is not None:
                     scheduler.step()
 
-                epoch_losses.append(float(loss.detach().cpu()))
+                loss_value = float(loss.detach().cpu())
+                epoch_losses.append(loss_value)
+                self._record_batch(
+                    {
+                        "phase": "train",
+                        "epoch": epoch + 1,
+                        "loss": loss_value,
+                        "potential_loss": loss_value,
+                        "gradient_norm": gradient_norm,
+                        "learning_rate": optimizer.param_groups[0]["lr"],
+                    }
+                )
 
             epoch_loss = float(torch.tensor(epoch_losses).mean())
 
-            self.training_history.append(
+            self._record_epoch(
                 {
                     "epoch": epoch + 1,
                     "potential_loss": epoch_loss,
@@ -122,7 +133,6 @@ class NeuralOptimalTransportTrainer(BaseTrainer):
                     "learning_rate": optimizer.param_groups[0]["lr"],
                 }
             )
-            self.completed_epochs = epoch + 1
 
             if self.config.verbose:
                 progress.set_description(
@@ -186,13 +196,25 @@ class NeuralOptimalTransportTrainer(BaseTrainer):
                 loss = (grad - point).norm(dim=-1).mean()
                 loss.backward()
 
-                torch.nn.utils.clip_grad_norm_(
+                gradient_norm = torch.nn.utils.clip_grad_norm_(
                     predictor.potential_network.parameters(),
                     max_norm=self.config.grad_clip_norm,
                 )
 
                 optimizer.step()
-                losses.append(float(loss.detach().cpu()))
+                self.global_step += 1
+                loss_value = float(loss.detach().cpu())
+                losses.append(loss_value)
+                self._record_batch(
+                    {
+                        "phase": "warmup",
+                        "warmup_iteration": iteration,
+                        "loss": loss_value,
+                        "warmup_loss": loss_value,
+                        "gradient_norm": gradient_norm,
+                        "learning_rate": optimizer.param_groups[0]["lr"],
+                    }
+                )
 
             if self.config.verbose:
                 progress.set_description(

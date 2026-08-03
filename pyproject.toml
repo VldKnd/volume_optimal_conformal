@@ -33,6 +33,11 @@ dependencies = [
     "lightgbm>=4.7.0",
 ]
 
+[project.optional-dependencies]
+tracking = [
+    "wandb>=0.19.10",
+]
+
 [tool.taskipy.tasks]
 format = "yapf -i -r src"
 

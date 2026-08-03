@@ -5,6 +5,7 @@ import math
 import random
 import time
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -26,6 +27,11 @@ from evaluation import (
 )
 from evaluation.wsc import wsc_unbiased
 from experimentation.config import ExperimentConfig
+from experimentation.tracking import (
+    ExperimentTracker,
+    NullTracker,
+    create_experiment_tracker,
+)
 from predictors import RandomForestPredictor
 from predictors import rearranged_transport as rearranged_predictors
 from predictors import transport as transport_predictors
@@ -37,9 +43,16 @@ from trainers import transport as transport_trainers
 class ExperimentRunner:
     """Train, calibrate, evaluate, and save one configured experiment."""
 
-    def __init__(self, config: ExperimentConfig):
+    def __init__(
+        self,
+        config: ExperimentConfig,
+        source_config_path: str | Path | None = None,
+    ):
         self.config = config
         self.run_directory = config.run_directory
+        self.source_config_path = (
+            None if source_config_path is None else Path(source_config_path)
+        )
 
         self.dataset = None
         self.predictor = None
@@ -47,8 +60,33 @@ class ExperimentRunner:
         self.conformal_predictor = None
         self.histories: dict[str, list[dict]] = {}
         self.metrics: dict[str, object] = {}
+        self.tracker: ExperimentTracker = NullTracker()
+        self._tracking_log_failed = False
 
     def run(self) -> ExperimentRunner:
+        try:
+            result = self._run()
+        except BaseException:
+            try:
+                self.tracker.finish(exit_code=1)
+            except Exception as tracking_error:
+                print(
+                    "[wandb] Failed to finish the unsuccessful run: "
+                    f"{tracking_error}",
+                    flush=True,
+                )
+            raise
+
+        try:
+            self.tracker.finish(exit_code=0)
+        except Exception as tracking_error:
+            print(
+                f"[wandb] Failed to finish the completed run: {tracking_error}",
+                flush=True,
+            )
+        return result
+
+    def _run(self) -> ExperimentRunner:
         config = self.config
         predictor_config = config.predictor_config
 
@@ -177,6 +215,19 @@ class ExperimentRunner:
             self.run_directory / "config.json",
             config.model_dump(mode="json"),
         )
+
+        resolved_run_config = config.model_dump(mode="json")
+        resolved_run_config["trainer_config"] = trainer_config.model_dump(mode="json")
+        resolved_run_config["rearrangement_trainer_config"] = (
+            None if rearrangement_trainer_config is None else
+            rearrangement_trainer_config.model_dump(mode="json")
+        )
+        self.tracker = create_experiment_tracker(
+            config.wandb,
+            run_config=resolved_run_config,
+            run_directory=self.run_directory,
+            source_config_path=self.source_config_path,
+        )
         self._seed(config.seed)
 
         if dataset_config.type == "atp1d":
@@ -234,6 +285,7 @@ class ExperimentRunner:
         else:
             self.predictor = predictor_class(predictor_config)
             base_trainer = trainer_class(trainer_config)
+            self._attach_live_tracking(base_trainer, stage="base")
             self._seed(config.seed)
             base_trainer.fit(self.predictor, train_loader)
         eval_method = getattr(self.predictor, "eval", None)
@@ -261,18 +313,34 @@ class ExperimentRunner:
                 rearrangement_trainer = rearrangement_trainer_class(
                     rearrangement_trainer_config
                 )
-                rearrangement_train_loader = make_xy_dataloader(
-                    splits.train,
-                    batch_size=(
-                        config.rearrangement_train_batch_size or config.train_batch_size
-                    ),
-                    shuffle=True,
+                collect_solver_diagnostics = (
+                    self.tracker.enabled and not self._tracking_log_failed
+                    and config.wandb.log_solver_diagnostics
                 )
-                self._seed(config.seed)
-                rearrangement_trainer.fit(
-                    self.rearrangement,
-                    rearrangement_train_loader,
-                )
+                rearrangement_flow = self.rearrangement.rearrangement_flow
+                if collect_solver_diagnostics:
+                    rearrangement_flow.enable_solver_diagnostics()
+                try:
+                    self._attach_live_tracking(
+                        rearrangement_trainer,
+                        stage="rearrangement",
+                    )
+                    rearrangement_train_loader = make_xy_dataloader(
+                        splits.train,
+                        batch_size=(
+                            config.rearrangement_train_batch_size
+                            or config.train_batch_size
+                        ),
+                        shuffle=True,
+                    )
+                    self._seed(config.seed)
+                    rearrangement_trainer.fit(
+                        self.rearrangement,
+                        rearrangement_train_loader,
+                    )
+                finally:
+                    if collect_solver_diagnostics:
+                        rearrangement_flow.disable_solver_diagnostics()
             self.rearrangement.eval()
             self._save_stage(
                 "rearrangement",
@@ -446,6 +514,7 @@ class ExperimentRunner:
                 )
 
         self._write_json(self.run_directory / "metrics.json", self.metrics)
+        self._log_tracking_metrics("evaluation", self.metrics)
         if config.metrics_verbose:
             elapsed = time.perf_counter() - metrics_start
             print(
@@ -453,6 +522,58 @@ class ExperimentRunner:
                 flush=True,
             )
         return self
+
+    def _attach_live_tracking(self, trainer, stage: str) -> None:
+        if not self.tracker.enabled or self._tracking_log_failed:
+            return
+
+        log_every_n_steps = self.config.wandb.log_every_n_steps
+
+        def log_training_metrics(
+            event: str,
+            metrics: dict[str, Any],
+            step: int,
+        ) -> None:
+            if (event == "batch" and step != 1 and step % log_every_n_steps != 0):
+                return
+
+            prefix = f"{event}_"
+
+            def metric_name(key: str) -> str:
+                if event == "epoch" and key == "epoch":
+                    return "epoch"
+                if key.startswith(prefix):
+                    return key
+                return f"{prefix}{key}"
+
+            payload = {metric_name(key): value for key, value in metrics.items()}
+            self._log_tracking_metrics(stage, payload, step=step)
+            if self._tracking_log_failed:
+                trainer.set_metric_callback(None)
+
+        trainer.set_metric_callback(log_training_metrics)
+
+    def _log_tracking_metrics(
+        self,
+        stage: str,
+        metrics: dict[str, Any],
+        *,
+        step: int | None = None,
+    ) -> None:
+        if self._tracking_log_failed or not self.tracker.enabled:
+            return
+
+        try:
+            self.tracker.log(stage, metrics, step=step)
+        except Exception as tracking_error:
+            self._tracking_log_failed = True
+            if stage == "rearrangement" and self.rearrangement is not None:
+                self.rearrangement.rearrangement_flow.disable_solver_diagnostics()
+            print(
+                "[wandb] Live logging failed; training will continue without "
+                f"further W&B metrics: {tracking_error}",
+                flush=True,
+            )
 
     def _save_stage(self, name, predictor, trainer) -> None:
         directory = self.run_directory / name

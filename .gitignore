@@ -29,6 +29,7 @@ notebooks/sandbox.ipynb
 experiments/
 experiments*/
 benchmark/results/
+wandb/
 
 # Model weights
 *.pth

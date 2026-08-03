@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import torch
@@ -11,6 +12,141 @@ from networks.measure_preserving_flows.dense_skew_symmetric_vector_field import 
 )
 
 _FIXED_STEP_METHODS = {"euler", "midpoint", "rk4", "explicit_adams", "implicit_adams"}
+_ADAPTIVE_STEP_METHODS = {
+    "adaptive_heun",
+    "bosh3",
+    "dopri5",
+    "dopri8",
+    "fehlberg2",
+}
+
+
+class _SolverDiagnosticCounters:
+    """Runtime-only counters for one or more ODE solves."""
+
+    __slots__ = (
+        "forward_nfe",
+        "backward_nfe",
+        "forward_attempted_steps",
+        "forward_accepted_steps",
+        "forward_rejected_steps",
+        "adjoint_attempted_steps",
+        "adjoint_accepted_steps",
+        "adjoint_rejected_steps",
+    )
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.forward_nfe = 0
+        self.backward_nfe = 0
+        self.forward_attempted_steps = 0
+        self.forward_accepted_steps = 0
+        self.forward_rejected_steps = 0
+        self.adjoint_attempted_steps = 0
+        self.adjoint_accepted_steps = 0
+        self.adjoint_rejected_steps = 0
+
+    def summary(self) -> dict[str, int]:
+        return {
+            "forward_nfe": self.forward_nfe,
+            "backward_nfe": self.backward_nfe,
+            "total_nfe": self.forward_nfe + self.backward_nfe,
+            "forward_attempted_steps": self.forward_attempted_steps,
+            "forward_accepted_steps": self.forward_accepted_steps,
+            "forward_rejected_steps": self.forward_rejected_steps,
+            "adjoint_attempted_steps": self.adjoint_attempted_steps,
+            "adjoint_accepted_steps": self.adjoint_accepted_steps,
+            "adjoint_rejected_steps": self.adjoint_rejected_steps,
+        }
+
+    def record_forward_attempt(self, *_args: Any) -> None:
+        self.forward_attempted_steps += 1
+
+    def record_forward_accept(self, *_args: Any) -> None:
+        self.forward_accepted_steps += 1
+
+    def record_forward_reject(self, *_args: Any) -> None:
+        self.forward_rejected_steps += 1
+
+    def record_adjoint_attempt(self, *_args: Any) -> None:
+        self.adjoint_attempted_steps += 1
+
+    def record_adjoint_accept(self, *_args: Any) -> None:
+        self.adjoint_accepted_steps += 1
+
+    def record_adjoint_reject(self, *_args: Any) -> None:
+        self.adjoint_rejected_steps += 1
+
+
+class _DiagnosticODEFunction:
+    """Count solver work without retaining states, step sizes, or tensors."""
+
+    __slots__ = (
+        "_function",
+        "_counters",
+        "_forward_solve_active",
+        "_forward_method",
+        "_adjoint_method",
+    )
+
+    def __init__(
+        self,
+        function: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
+        counters: _SolverDiagnosticCounters,
+        forward_method: str,
+        adjoint_method: str,
+    ) -> None:
+        self._function = function
+        self._counters = counters
+        self._forward_solve_active = True
+        self._forward_method = forward_method
+        self._adjoint_method = adjoint_method
+
+    def __call__(
+        self,
+        t: torch.Tensor,
+        state: torch.Tensor,
+    ) -> torch.Tensor:
+        if self._forward_solve_active:
+            self._counters.forward_nfe += 1
+        else:
+            self._counters.backward_nfe += 1
+        return self._function(t, state)
+
+    def mark_forward_solve_complete(self) -> None:
+        self._forward_solve_active = False
+
+    def __getattr__(self, name: str) -> Callable[..., None]:
+        # torchdiffeq discovers callbacks through getattr. Supplying adaptive
+        # callbacks only to adaptive methods avoids warnings for fixed-step
+        # solvers while keeping the common attempted-step callback available.
+        if name == "callback_step":
+            return self._counters.record_forward_attempt
+        if name == "callback_step_adjoint":
+            return self._counters.record_adjoint_attempt
+        if (
+            self._forward_method in _ADAPTIVE_STEP_METHODS
+            and name == "callback_accept_step"
+        ):
+            return self._counters.record_forward_accept
+        if (
+            self._forward_method in _ADAPTIVE_STEP_METHODS
+            and name == "callback_reject_step"
+        ):
+            return self._counters.record_forward_reject
+        if (
+            self._adjoint_method in _ADAPTIVE_STEP_METHODS
+            and name == "callback_accept_step_adjoint"
+        ):
+            return self._counters.record_adjoint_accept
+        if (
+            self._adjoint_method in _ADAPTIVE_STEP_METHODS
+            and name == "callback_reject_step_adjoint"
+        ):
+            return self._counters.record_adjoint_reject
+        raise AttributeError(name)
 
 
 class VectorFieldFlow(nn.Module):
@@ -69,6 +205,61 @@ class VectorFieldFlow(nn.Module):
 
         self.endpoint_alpha = float(endpoint_alpha)
         self.last_end_time = 1.0
+
+        # This is deliberately a plain Python object rather than a parameter or
+        # buffer. Diagnostics are runtime telemetry and must never enter a model
+        # state_dict or trainer checkpoint.
+        self._solver_diagnostic_counters: _SolverDiagnosticCounters | None = None
+
+    @property
+    def solver_diagnostics_enabled(self) -> bool:
+        """Whether solver work is currently being counted."""
+
+        return self._solver_diagnostic_counters is not None
+
+    def enable_solver_diagnostics(self, reset: bool = True) -> None:
+        """Enable cumulative, synchronization-free ODE solver counters.
+
+        Diagnostics add a small Python-counter overhead to each vector-field
+        evaluation and solver callback, so they are disabled by default.
+        Calling this method starts a fresh measurement by default.
+        """
+
+        if self._solver_diagnostic_counters is None:
+            self._solver_diagnostic_counters = _SolverDiagnosticCounters()
+        elif reset:
+            self._solver_diagnostic_counters.reset()
+
+    def disable_solver_diagnostics(self) -> None:
+        """Disable solver counters and discard the current measurements."""
+
+        self._solver_diagnostic_counters = None
+
+    def reset_solver_diagnostics(self) -> None:
+        """Reset enabled solver counters without disabling instrumentation."""
+
+        if self._solver_diagnostic_counters is not None:
+            self._solver_diagnostic_counters.reset()
+
+    def solver_diagnostics_summary(
+        self,
+        reset: bool = False,
+    ) -> dict[str, int] | None:
+        """Return cumulative solver counters, or ``None`` when disabled.
+
+        For adjoint integration, call this after ``loss.backward()`` to include
+        the backward solve. Setting ``reset=True`` returns the current values and
+        atomically starts a new measurement window.
+        """
+
+        counters = self._solver_diagnostic_counters
+        if counters is None:
+            return None
+
+        summary = counters.summary()
+        if reset:
+            counters.reset()
+        return summary
 
     def _solver_options(
         self,
@@ -141,18 +332,38 @@ class VectorFieldFlow(nn.Module):
             if self.adjoint_atol is not None:
                 solver_kwargs["adjoint_atol"] = self.adjoint_atol
 
-        def ode_function(
+        def base_ode_function(
             t: torch.Tensor,
             state: torch.Tensor,
         ) -> torch.Tensor:
             return self.vector_field(state, context, t)
 
-        solution = solver(
-            ode_function,
-            u,
-            times,
-            **solver_kwargs,
-        )
+        counters = self._solver_diagnostic_counters
+        if counters is None:
+            solution = solver(
+                base_ode_function,
+                u,
+                times,
+                **solver_kwargs,
+            )
+        else:
+            diagnostic_function = _DiagnosticODEFunction(
+                function=base_ode_function,
+                counters=counters,
+                forward_method=self.method,
+                adjoint_method=self.adjoint_method or self.method,
+            )
+            try:
+                solution = solver(
+                    diagnostic_function,
+                    u,
+                    times,
+                    **solver_kwargs,
+                )
+            finally:
+                # odeint_adjoint reuses this same callable later during
+                # backpropagation, so subsequent evaluations are backward NFE.
+                diagnostic_function.mark_forward_solve_complete()
         return solution[-1]
 
     def _sample_end_time(self, u: torch.Tensor) -> float:
@@ -212,7 +423,7 @@ class GaussianSkewFieldFlow(VectorFieldFlow):
         adjoint_method: str | None = None,
         adjoint_rtol: float | None = None,
         adjoint_atol: float | None = None,
-        adjoint_options: dict[str, Any] | None = { "norm":"seminorm" },
+        adjoint_options: dict[str, Any] | None = {"norm": "seminorm"},
         number_of_steps: int | None = None,
         context_dimension: int = 0,
         vector_field: DenseGaussianSkewVectorField | None = None,

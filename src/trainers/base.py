@@ -4,12 +4,15 @@ import copy
 import random
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
-from typing import Any, ClassVar, Self
+from typing import Any, Callable, ClassVar, Literal, Self, TypeAlias
 
 import numpy as np
 import torch
 from pydantic import BaseModel
 from predictors.base import BasePredictor
+
+MetricEvent: TypeAlias = Literal["batch", "epoch"]
+MetricCallback: TypeAlias = Callable[[MetricEvent, dict[str, Any], int], None]
 
 
 class BaseTrainer(ABC):
@@ -46,6 +49,62 @@ class BaseTrainer(ABC):
         self._pending_optimizer_state_dict: dict[str, Any] | None = None
         self._pending_scheduler_state_dict: dict[str, Any] | None = None
         self._pending_rng_state: dict[str, Any] | None = None
+        self._metric_callback: MetricCallback | None = None
+
+    def set_metric_callback(
+        self,
+        callback: MetricCallback | None,
+    ) -> None:
+        """Attach a runtime-only callback for live batch and epoch metrics.
+
+        The callback receives ``(event, metrics, step)``, where ``event`` is
+        either ``"batch"`` or ``"epoch"`` and ``step`` is the trainer's
+        current global optimizer step. Metric values may include detached
+        scalar tensors so a throttling callback can discard an event without
+        forcing a device synchronization. The callback is intentionally
+        excluded from trainer checkpoints.
+        """
+        self._metric_callback = callback
+
+    @property
+    def live_metrics_enabled(self) -> bool:
+        """Whether a runtime metric consumer is attached."""
+        return self._metric_callback is not None
+
+    def _record_batch(self, metrics: dict[str, Any]) -> None:
+        self._emit_metrics("batch", metrics)
+
+    def _record_epoch(self, metrics: dict[str, Any]) -> None:
+        """Store an epoch record, update progress, and emit it live."""
+        epoch = metrics.get("epoch")
+        expected_epoch = self.completed_epochs + 1
+        if (
+            isinstance(epoch, bool) or not isinstance(epoch, int)
+            or epoch != expected_epoch
+        ):
+            raise ValueError(
+                f"Epoch metrics must contain epoch={expected_epoch}, got "
+                f"{epoch!r}."
+            )
+
+        record = copy.deepcopy(metrics)
+        self.training_history.append(record)
+        self.completed_epochs = epoch
+        self._emit_metrics("epoch", record)
+
+    def _emit_metrics(
+        self,
+        event: MetricEvent,
+        metrics: dict[str, Any],
+    ) -> None:
+        if self._metric_callback is None:
+            return
+
+        self._metric_callback(
+            event,
+            dict(metrics),
+            self.global_step,
+        )
 
     def save(self, path: str) -> None:
         torch.save(self.state_dict(), path)

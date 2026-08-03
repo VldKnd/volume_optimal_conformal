@@ -89,7 +89,7 @@ class FlowMatchingTrainer(BaseTrainer):
                 optimizer.zero_grad()
                 loss.backward()
 
-                torch.nn.utils.clip_grad_norm_(
+                gradient_norm = torch.nn.utils.clip_grad_norm_(
                     predictor.parameters(),
                     self.config.grad_clip_norm,
                 )
@@ -100,11 +100,21 @@ class FlowMatchingTrainer(BaseTrainer):
                 if scheduler is not None:
                     scheduler.step()
 
-                epoch_losses.append(loss.item())
+                loss_value = loss.item()
+                epoch_losses.append(loss_value)
+                self._record_batch(
+                    {
+                        "epoch": epoch + 1,
+                        "loss": loss_value,
+                        "flow_matching_loss": loss_value,
+                        "gradient_norm": gradient_norm,
+                        "learning_rate": optimizer.param_groups[0]["lr"],
+                    }
+                )
 
             epoch_loss = float(torch.tensor(epoch_losses).mean())
 
-            self.training_history.append(
+            self._record_epoch(
                 {
                     "epoch": epoch + 1,
                     "flow_matching_loss": epoch_loss,
@@ -112,7 +122,6 @@ class FlowMatchingTrainer(BaseTrainer):
                     "learning_rate": optimizer.param_groups[0]["lr"],
                 }
             )
-            self.completed_epochs = epoch + 1
 
             if self.config.verbose:
                 progress.set_description(f"Epoch {epoch+1} | Loss {epoch_loss:.4f}")

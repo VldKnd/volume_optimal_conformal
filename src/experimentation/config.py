@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from configs.conformal import (
     ResidualConformalPredictorConfig,
@@ -58,6 +58,26 @@ RearrangementConfig = Annotated[
 ]
 
 
+class WandbConfig(BaseModel):
+    """Optional Weights & Biases experiment tracking configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["disabled", "offline", "online"] = "disabled"
+    project: str = Field(
+        default="minimal-volume-conformal-prediction",
+        min_length=1,
+    )
+    entity: str | None = None
+    group: str | None = None
+    name: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    notes: str | None = None
+    job_type: str | None = None
+    log_every_n_steps: int = Field(default=20, gt=0)
+    log_solver_diagnostics: bool = True
+
+
 class ExperimentConfig(BaseModel):
     """Configuration for one experimental training and evaluation pipeline."""
 
@@ -85,6 +105,7 @@ class ExperimentConfig(BaseModel):
     test_batch_size: int = Field(default=512, gt=0)
     compute_volume: bool = False
     metrics_verbose: bool = True
+    wandb: WandbConfig = Field(default_factory=WandbConfig)
 
     @property
     def run_directory(self) -> Path:

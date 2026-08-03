@@ -150,6 +150,7 @@ class ExplicitDerivativeMLP(MeasurePreservingMLP):
                         layer.out_features,
                         self.state_dim,
                     )
+
                 else:
                     hidden_state_jacobian = F.linear(
                         hidden_state_jacobian.transpose(-2, -1),

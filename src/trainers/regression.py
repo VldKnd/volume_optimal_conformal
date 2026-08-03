@@ -46,10 +46,14 @@ def _fit_sklearn_trainer(
     mse = float(np.mean((prediction - y)**2))
 
     trainer.steps_per_epoch = len(dataloader)
-    trainer.completed_epochs = 1
     trainer.global_step = 1
     trainer.initialization_complete = True
-    trainer.training_history.append(
+    trainer._record_batch({
+        "epoch": 1,
+        "loss": mse,
+        "mean_squared_error": mse,
+    })
+    trainer._record_epoch(
         {
             "epoch": 1,
             "mean_squared_error": mse,
@@ -127,10 +131,19 @@ class MLPTrainer(BaseTrainer):
                 self.global_step += 1
                 if scheduler is not None:
                     scheduler.step()
-                losses.append(float(loss.detach().cpu()))
+                loss_value = float(loss.detach().cpu())
+                losses.append(loss_value)
+                self._record_batch(
+                    {
+                        "epoch": epoch + 1,
+                        "loss": loss_value,
+                        "mean_squared_error": loss_value,
+                        "learning_rate": optimizer.param_groups[0]["lr"],
+                    }
+                )
 
             epoch_loss = float(torch.tensor(losses).mean())
-            self.training_history.append(
+            self._record_epoch(
                 {
                     "epoch": epoch + 1,
                     "mean_squared_error": epoch_loss,
@@ -138,7 +151,6 @@ class MLPTrainer(BaseTrainer):
                     "learning_rate": optimizer.param_groups[0]["lr"],
                 }
             )
-            self.completed_epochs = epoch + 1
 
             if self.config.verbose:
                 progress.set_description(f"Epoch {epoch + 1} | MSE {epoch_loss:.4f}")

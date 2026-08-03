@@ -98,6 +98,10 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
             radii: list[float] = []
 
             for batch in dataloader:
+                batch_start = (
+                    time.perf_counter() if self.live_metrics_enabled else None
+                )
+                self._reset_solver_diagnostics(predictor)
                 x_batch = self._extract_x_batch(batch)
                 x_batch = predictor.to_device(x_batch)
                 x = self._repeat_context(
@@ -135,7 +139,7 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
                 optimizer.zero_grad()
                 loss.backward()
 
-                torch.nn.utils.clip_grad_norm_(
+                gradient_norm = torch.nn.utils.clip_grad_norm_(
                     predictor.rearrangement_flow.parameters(),
                     max_norm=self.config.grad_clip_norm,
                 )
@@ -146,15 +150,30 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
                 if scheduler is not None:
                     scheduler.step()
 
-                epoch_losses.append(float(loss.detach().cpu()))
+                loss_value = float(loss.detach().cpu())
+                epoch_losses.append(loss_value)
                 coverage_masses.append(coverage_value)
                 radii.append(radius)
+                if batch_start is not None:
+                    batch_metrics = {
+                        "epoch": epoch + 1,
+                        "loss": loss_value,
+                        "log_volume_loss": loss_value,
+                        "gradient_norm": gradient_norm,
+                        "learning_rate": optimizer.param_groups[0]["lr"],
+                        "coverage_mass": coverage_value,
+                        "radius": radius,
+                        "mc_samples_per_x": self.config.mc_samples_per_x,
+                        "batch_time": time.perf_counter() - batch_start,
+                    }
+                    batch_metrics.update(self._rearrangement_flow_metrics(predictor))
+                    self._record_batch(batch_metrics)
 
             epoch_loss = float(torch.tensor(epoch_losses).mean())
             coverage_tensor = torch.tensor(coverage_masses)
             radius_tensor = torch.tensor(radii)
 
-            self.training_history.append(
+            self._record_epoch(
                 {
                     "epoch": epoch + 1,
                     "log_volume_loss": epoch_loss,
@@ -169,7 +188,6 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
                     "learning_rate": optimizer.param_groups[0]["lr"],
                 }
             )
-            self.completed_epochs = epoch + 1
 
             if self.config.verbose:
                 progress.set_description(

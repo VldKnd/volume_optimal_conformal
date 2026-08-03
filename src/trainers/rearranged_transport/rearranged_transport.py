@@ -83,6 +83,10 @@ class RearrangedTransportTrainer(BaseTrainer):
             epoch_losses: list[float] = []
 
             for batch in dataloader:
+                batch_start = (
+                    time.perf_counter() if self.live_metrics_enabled else None
+                )
+                self._reset_solver_diagnostics(predictor)
                 x_batch = self._extract_x_batch(batch)
                 x_batch = predictor.to_device(x_batch)
                 x = self._repeat_context(
@@ -110,7 +114,7 @@ class RearrangedTransportTrainer(BaseTrainer):
                 optimizer.zero_grad()
                 loss.backward()
 
-                torch.nn.utils.clip_grad_norm_(
+                gradient_norm = torch.nn.utils.clip_grad_norm_(
                     predictor.rearrangement_flow.parameters(),
                     max_norm=self.config.grad_clip_norm,
                 )
@@ -121,11 +125,26 @@ class RearrangedTransportTrainer(BaseTrainer):
                 if scheduler is not None:
                     scheduler.step()
 
-                epoch_losses.append(float(loss.detach().cpu()))
+                loss_value = float(loss.detach().cpu())
+                epoch_losses.append(loss_value)
+                if batch_start is not None:
+                    batch_metrics = {
+                        "epoch": epoch + 1,
+                        "loss": loss_value,
+                        "log_volume_loss": loss_value,
+                        "gradient_norm": gradient_norm,
+                        "learning_rate": optimizer.param_groups[0]["lr"],
+                        "radius": radius,
+                        "coverage_mass": self.config.coverage_mass,
+                        "mc_samples_per_x": self.config.mc_samples_per_x,
+                        "batch_time": time.perf_counter() - batch_start,
+                    }
+                    batch_metrics.update(self._rearrangement_flow_metrics(predictor))
+                    self._record_batch(batch_metrics)
 
             epoch_loss = float(torch.tensor(epoch_losses).mean())
 
-            self.training_history.append(
+            self._record_epoch(
                 {
                     "epoch": epoch + 1,
                     "log_volume_loss": epoch_loss,
@@ -136,7 +155,6 @@ class RearrangedTransportTrainer(BaseTrainer):
                     "learning_rate": optimizer.param_groups[0]["lr"],
                 }
             )
-            self.completed_epochs = epoch + 1
 
             if self.config.verbose:
                 progress.set_description(
@@ -258,6 +276,60 @@ class RearrangedTransportTrainer(BaseTrainer):
     ) -> float:
         return float(chi.ppf(coverage_mass, df=dimension))
 
+    @staticmethod
+    def _rearrangement_flow_metrics(
+        predictor: RearrangedTransportPredictor,
+    ) -> dict[str, float | int | torch.Tensor]:
+        """Return inexpensive scalar diagnostics for live tracking."""
+        flow = predictor.rearrangement_flow
+        metrics: dict[str, float | int | torch.Tensor] = {
+            "integration_end_time": flow.last_end_time,
+        }
+
+        if predictor.device.type == "cuda":
+            metrics.update(
+                cuda_memory_allocated=torch.cuda.memory_allocated(predictor.device),
+                cuda_max_memory_allocated=torch.cuda.max_memory_allocated(
+                    predictor.device
+                ),
+                cuda_memory_reserved=torch.cuda.memory_reserved(predictor.device),
+                cuda_max_memory_reserved=torch.cuda.max_memory_reserved(
+                    predictor.device
+                ),
+            )
+
+        vector_field = getattr(flow, "vector_field", None)
+        network = getattr(vector_field, "network", None)
+        layers = getattr(network, "net", None)
+        if layers is not None and len(layers) > 0:
+            output_activation = layers[-1]
+            alpha = getattr(output_activation, "alpha", None)
+            scale = getattr(output_activation, "scale", None)
+            if isinstance(alpha, torch.Tensor) and alpha.numel() == 1:
+                metrics["output_alpha"] = alpha.detach()
+            if isinstance(scale, torch.Tensor) and scale.numel() == 1:
+                metrics["output_scale"] = scale.detach()
+
+        solver_diagnostics = flow.solver_diagnostics_summary(reset=True)
+        if solver_diagnostics is not None:
+            metrics.update(
+                {
+                    f"solver_{key}": value
+                    for key, value in solver_diagnostics.items()
+                }
+            )
+        return metrics
+
+    def _reset_solver_diagnostics(
+        self,
+        predictor: RearrangedTransportPredictor,
+    ) -> None:
+        if (
+            self.live_metrics_enabled
+            and predictor.rearrangement_flow.solver_diagnostics_enabled
+        ):
+            predictor.rearrangement_flow.reset_solver_diagnostics()
+
 
 class SupervisedRearrangedTransportTrainer(RearrangedTransportTrainer):
     """
@@ -331,6 +403,10 @@ class SupervisedRearrangedTransportTrainer(RearrangedTransportTrainer):
             seen_samples = 0
 
             for batch in dataloader:
+                batch_start = (
+                    time.perf_counter() if self.live_metrics_enabled else None
+                )
+                self._reset_solver_diagnostics(predictor)
                 x_batch, y_batch = self._extract_xy_batch(batch)
                 x_batch = predictor.to_device(x_batch)
                 y_batch = predictor.to_device(y_batch)
@@ -345,8 +421,10 @@ class SupervisedRearrangedTransportTrainer(RearrangedTransportTrainer):
                         u=transport_u,
                     )
                     inside_ball = u.norm(dim=-1) <= radius
-                    seen_samples += int(inside_ball.numel())
-                    accepted_samples += int(inside_ball.sum().item())
+                    batch_seen_samples = int(inside_ball.numel())
+                    batch_accepted_samples = int(inside_ball.sum().item())
+                    seen_samples += batch_seen_samples
+                    accepted_samples += batch_accepted_samples
 
                     if not inside_ball.any():
                         continue
@@ -368,7 +446,7 @@ class SupervisedRearrangedTransportTrainer(RearrangedTransportTrainer):
                 optimizer.zero_grad()
                 loss.backward()
 
-                torch.nn.utils.clip_grad_norm_(
+                gradient_norm = torch.nn.utils.clip_grad_norm_(
                     predictor.rearrangement_flow.parameters(),
                     max_norm=self.config.grad_clip_norm,
                 )
@@ -379,7 +457,25 @@ class SupervisedRearrangedTransportTrainer(RearrangedTransportTrainer):
                 if scheduler is not None:
                     scheduler.step()
 
-                epoch_losses.append(float(loss.detach().cpu()))
+                loss_value = float(loss.detach().cpu())
+                epoch_losses.append(loss_value)
+                if batch_start is not None:
+                    batch_metrics = {
+                        "epoch": epoch + 1,
+                        "loss": loss_value,
+                        "log_volume_loss": loss_value,
+                        "gradient_norm": gradient_norm,
+                        "learning_rate": optimizer.param_groups[0]["lr"],
+                        "radius": radius,
+                        "coverage_mass": self.config.coverage_mass,
+                        "accepted_samples": batch_accepted_samples,
+                        "seen_samples": batch_seen_samples,
+                        "acceptance_rate":
+                        (batch_accepted_samples / batch_seen_samples),
+                        "batch_time": time.perf_counter() - batch_start,
+                    }
+                    batch_metrics.update(self._rearrangement_flow_metrics(predictor))
+                    self._record_batch(batch_metrics)
 
             if not epoch_losses:
                 raise RuntimeError(
@@ -391,7 +487,7 @@ class SupervisedRearrangedTransportTrainer(RearrangedTransportTrainer):
             epoch_loss = float(torch.tensor(epoch_losses).mean())
             acceptance_rate = accepted_samples / max(seen_samples, 1)
 
-            self.training_history.append(
+            self._record_epoch(
                 {
                     "epoch": epoch + 1,
                     "log_volume_loss": epoch_loss,
@@ -404,7 +500,6 @@ class SupervisedRearrangedTransportTrainer(RearrangedTransportTrainer):
                     "learning_rate": optimizer.param_groups[0]["lr"],
                 }
             )
-            self.completed_epochs = epoch + 1
 
             if self.config.verbose:
                 progress.set_description(

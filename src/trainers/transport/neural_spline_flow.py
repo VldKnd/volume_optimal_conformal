@@ -76,7 +76,7 @@ class NeuralSplineFlowTrainer(BaseTrainer):
                 optimizer.zero_grad()
                 loss.backward()
 
-                torch.nn.utils.clip_grad_norm_(
+                gradient_norm = torch.nn.utils.clip_grad_norm_(
                     predictor.flow_layers.parameters(),
                     max_norm=self.config.grad_clip_norm,
                 )
@@ -87,11 +87,21 @@ class NeuralSplineFlowTrainer(BaseTrainer):
                 if scheduler is not None:
                     scheduler.step()
 
-                epoch_losses.append(float(loss.detach().cpu()))
+                loss_value = float(loss.detach().cpu())
+                epoch_losses.append(loss_value)
+                self._record_batch(
+                    {
+                        "epoch": epoch + 1,
+                        "loss": loss_value,
+                        "negative_log_likelihood": loss_value,
+                        "gradient_norm": gradient_norm,
+                        "learning_rate": optimizer.param_groups[0]["lr"],
+                    }
+                )
 
             epoch_loss = float(torch.tensor(epoch_losses).mean())
 
-            self.training_history.append(
+            self._record_epoch(
                 {
                     "epoch": epoch + 1,
                     "negative_log_likelihood": epoch_loss,
@@ -99,7 +109,6 @@ class NeuralSplineFlowTrainer(BaseTrainer):
                     "learning_rate": optimizer.param_groups[0]["lr"],
                 }
             )
-            self.completed_epochs = epoch + 1
 
             if self.config.verbose:
                 progress.set_description(f"Epoch {epoch + 1} | NLL {epoch_loss:.4f}")
