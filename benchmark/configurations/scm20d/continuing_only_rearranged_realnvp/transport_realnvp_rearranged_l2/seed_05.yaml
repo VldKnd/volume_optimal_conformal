@@ -27,7 +27,7 @@ predictor_config:
   dtype: float32
 
 trainer_config:
-  epochs: 100
+  epochs: 5000
   learning_rate: 0.001
   weight_decay: 0.0001
   grad_clip_norm: 1.0
