@@ -10,6 +10,7 @@ from networks.measure_preserving_flows.mlp import (
     ActivationName,
     MeasurePreservingMLP,
     PReLU,
+    ScaledTanh,
 )
 
 
@@ -85,6 +86,10 @@ def _activation_derivative(
             scaled_value == activation.threshold,
             threshold_derivative,
         )
+
+    if isinstance(activation, ScaledTanh):
+        tanh_value = torch.tanh(value)
+        return activation.scale * (1.0 - tanh_value.square())
 
     if isinstance(activation, nn.Tanh):
         return 1.0 - activated_value.square()

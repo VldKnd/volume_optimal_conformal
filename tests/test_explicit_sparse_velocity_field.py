@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import unittest
 from unittest import mock
 
@@ -8,12 +9,29 @@ import torch
 from networks.measure_preserving_flows.explicit_sparse_velocity_field import (
     ExplicitSparseGaussianSkewVectorField,
 )
+from networks.measure_preserving_flows.mlp import ScaledTanh
 from networks.measure_preserving_flows.sparse_skew_symmetric_vector_field import (
     SparseGaussianSkewVectorField,
 )
 
 
 class ExplicitSparseVelocityFieldSmokeTest(unittest.TestCase):
+
+    def test_scaled_tanh_is_trainable_and_bounded(self) -> None:
+        activation = ScaledTanh(initial_scale=2.5).double()
+        inputs = torch.tensor([-100.0, 0.4, 100.0], dtype=torch.float64)
+        outputs = activation(inputs)
+
+        self.assertEqual(activation.alpha.shape, torch.Size([]))
+        self.assertTrue(activation.alpha.requires_grad)
+        self.assertGreater(activation.scale.item(), 0.0)
+        self.assertTrue((outputs.abs() <= activation.scale.abs()).all())
+
+        outputs[1].backward()
+        torch.testing.assert_close(
+            activation.alpha.grad,
+            activation.scale.detach() * torch.tanh(inputs[1]),
+        )
 
     def _make_matching_fields(
         self,
@@ -33,13 +51,14 @@ class ExplicitSparseVelocityFieldSmokeTest(unittest.TestCase):
         }
         reference = SparseGaussianSkewVectorField(**field_kwargs).double()
         explicit = ExplicitSparseGaussianSkewVectorField(**field_kwargs).double()
-        self.assertIsInstance(reference.network.net[-1], torch.nn.Tanh)
-        self.assertIsInstance(explicit.network.net[-1], torch.nn.Tanh)
+        self.assertIsInstance(reference.network.net[-1], ScaledTanh)
+        self.assertIsInstance(explicit.network.net[-1], ScaledTanh)
 
         generator = torch.Generator().manual_seed(731)
         with torch.no_grad():
             for parameter in reference.parameters():
                 parameter.normal_(mean=0.0, std=0.2, generator=generator)
+            reference.network.net[-1].alpha.fill_(math.log(1.7))
 
         self.assertEqual(
             list(reference.state_dict()),

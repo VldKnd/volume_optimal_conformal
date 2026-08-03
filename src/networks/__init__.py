@@ -3,6 +3,7 @@ from networks.measure_preserving_flows import (
     ExplicitSparseGaussianSkewVectorField,
     MeasurePreservingMLP,
     PReLU,
+    ScaledTanh,
     SparseGaussianSkewVectorField,
 )
 from networks.mlp_vector_field import MLPVectorField
@@ -17,6 +18,7 @@ __all__ = [
     "MeasurePreservingMLP",
     "MLPVectorField",
     "PReLU",
+    "ScaledTanh",
     "PICNN",
     "PISCNN",
     "PosLinear",

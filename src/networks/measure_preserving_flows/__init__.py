@@ -13,6 +13,7 @@ from networks.measure_preserving_flows.mlp import (
     ActivationName,
     MeasurePreservingMLP,
     PReLU,
+    ScaledTanh,
     make_activation,
 )
 from networks.measure_preserving_flows.sparse_skew_symmetric_vector_field import (
@@ -27,6 +28,7 @@ __all__ = [
     "GaussianSkewFieldFlow",
     "MeasurePreservingMLP",
     "PReLU",
+    "ScaledTanh",
     "SparseGaussianSkewVectorField",
     "VectorFieldFlow",
     "make_activation",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Literal
 
 import torch
@@ -31,6 +32,27 @@ class PReLU(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return torch.relu(x).pow(self.p) / self.p
+
+
+class ScaledTanh(nn.Module):
+    """Tanh with a positive trainable scalar output amplitude."""
+
+    def __init__(self, initial_scale: float = 1.0):
+        super().__init__()
+
+        if not math.isfinite(initial_scale) or initial_scale <= 0.0:
+            raise ValueError(
+                f"initial_scale must be finite and positive, got {initial_scale}."
+            )
+
+        self.alpha = nn.Parameter(torch.tensor(math.log(initial_scale)))
+
+    @property
+    def scale(self) -> torch.Tensor:
+        return torch.exp(self.alpha)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.scale * torch.tanh(x)
 
 
 def make_activation(
@@ -102,16 +124,18 @@ class MeasurePreservingMLP(nn.Module):
         ]
 
         for _ in range(num_hidden_layers):
-            layers.extend([
-                nn.Linear(hidden_dim, hidden_dim),
-                make_activation(activation, activation_power=activation_power),
-            ])
+            layers.extend(
+                [
+                    nn.Linear(hidden_dim, hidden_dim),
+                    make_activation(activation, activation_power=activation_power),
+                ]
+            )
 
         output_layer = nn.Linear(hidden_dim, self.output_dim)
         nn.init.zeros_(output_layer.weight)
         nn.init.zeros_(output_layer.bias)
         layers.append(output_layer)
-        layers.append(make_activation("tanh", activation_power=activation_power))
+        layers.append(ScaledTanh(initial_scale=1.0))
         self.net = nn.Sequential(*layers)
 
     def _time_feature(
