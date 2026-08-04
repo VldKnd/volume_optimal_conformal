@@ -1,5 +1,7 @@
-import torch
 import math
+
+import torch
+
 
 class ActNorm(torch.nn.Module):
     """Adapted from https://github.com/ludvb/actnorm/blob/master/actnorm/actnorm.py"""
@@ -7,11 +9,16 @@ class ActNorm(torch.nn.Module):
     def __init__(self, feature_dimension: int):
         super().__init__()
         self.epsilon = 1e-8
-        self.scale = torch.nn.Parameter(torch.zeros(feature_dimension))
+        self.log_scale = torch.nn.Parameter(torch.zeros(feature_dimension))
         self.bias = torch.nn.Parameter(torch.zeros(feature_dimension))
         self.register_buffer("initialized", torch.tensor(False))
 
-    def initialize(self, x: torch.Tensor):
+    @property
+    def scale(self) -> torch.Tensor:
+        """Return the strictly positive effective activation scale."""
+        return self.log_scale.exp()
+
+    def initialize(self, x: torch.Tensor) -> None:
         reduce_dims = tuple(range(x.dim() - 1))
         x_detached = x.detach()
         data_std = x_detached.std(dim=reduce_dims, unbiased=False)
@@ -20,7 +27,7 @@ class ActNorm(torch.nn.Module):
 
         with torch.no_grad():
             self.bias.copy_(data_scaled_mean)
-            self.scale.copy_(data_scale)
+            self.log_scale.copy_(data_scale.log())
             self.initialized.fill_(True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -28,6 +35,41 @@ class ActNorm(torch.nn.Module):
             self.initialize(x)
 
         return x.mul(self.scale).sub(self.bias)
+
+    def _load_from_state_dict(
+        self,
+        state_dict,
+        prefix,
+        local_metadata,
+        strict,
+        missing_keys,
+        unexpected_keys,
+        error_msgs,
+    ) -> None:
+        """Convert checkpoints saved before ``scale`` became log-parameterized."""
+        legacy_scale_key = f"{prefix}scale"
+        log_scale_key = f"{prefix}log_scale"
+        legacy_scale = state_dict.pop(legacy_scale_key, None)
+        if log_scale_key not in state_dict and legacy_scale is not None:
+            if torch.any(legacy_scale <= 0.0):
+                error_msgs.append(
+                    f'Legacy ActNorm parameter "{legacy_scale_key}" contains '
+                    "non-positive values and cannot be represented exactly as "
+                    "an exponentiated log-scale."
+                )
+                state_dict[log_scale_key] = torch.zeros_like(legacy_scale)
+            else:
+                state_dict[log_scale_key] = legacy_scale.log()
+
+        super()._load_from_state_dict(
+            state_dict,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        )
 
 
 class PosLinear(torch.nn.Linear):
