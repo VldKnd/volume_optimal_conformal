@@ -40,6 +40,61 @@ uv run python scripts/run_benchmark.py \
   benchmark/configurations/scm20d/comparisont_with_residuals/transport_realnvp_l2
 ```
 
+A single YAML file can also be selected directly:
+
+```bash
+uv run python scripts/run_benchmark.py \
+  benchmark/configurations/scm20d/comparisont_with_residuals/transport_realnvp_l2/seed_00.yaml
+```
+
+## Running a configuration suite on Slurm
+
+Prepare the locked environment once on the login node. Keep the repository on
+the cluster's persistent `/shared/home` storage:
+
+```bash
+uv sync --frozen --extra tracking
+```
+
+The submitter recursively finds every `.yaml` and `.yml` below the path and
+submits one independent one-GPU job for each configuration. Set the account
+once, then only the configuration directory is needed:
+
+```bash
+export MVCP_SLURM_ACCOUNT=nils  # set this once for your group
+scripts/submit_benchmark_slurm.sh \
+  benchmark/configurations/scm20d/continuing_only_rearranged_realnvp/transport_realnvp_rearranged_l2
+```
+
+All jobs are submitted immediately. By default, dependency chains allow at
+most two jobs from the submission to run concurrently, while the remaining
+jobs stay pending. Change that limit when needed with:
+
+```bash
+MVCP_SLURM_MAX_CONCURRENT=4 \
+  scripts/submit_benchmark_slurm.sh \
+  benchmark/configurations/scm20d/continuing_only_rearranged_realnvp/transport_realnvp_rearranged_l2
+```
+
+The worker uses the W&B settings from each YAML file without overriding them,
+so configurations with `wandb.mode: online` are tracked live. Optional
+environment variables include `MVCP_SLURM_QOS`, `MVCP_SLURM_PARTITION`,
+`MVCP_SLURM_TIME_LIMIT`, `MVCP_SLURM_CPUS_PER_TASK`, and
+`MVCP_SLURM_MEMORY`. Preview every `sbatch` command with:
+
+```bash
+scripts/submit_benchmark_slurm.sh --dry-run \
+  benchmark/configurations/scm20d/continuing_only_rearranged_realnvp/transport_realnvp_rearranged_l2
+```
+
+Every configuration now receives its own time limit, exit status, log files,
+and preemption/requeue lifecycle. Logs are written to `logs/slurm/`. The
+cluster permits at most 20 queued plus running jobs per user, including jobs
+that are pending on dependencies; the submitter checks this before launching.
+Pending time does not consume the job's runtime limit. Ensure every selected
+configuration has a unique `save_directory` and `name`, and do not submit
+overlapping suites concurrently, or their result files can collide.
+
 ## Live W&B tracking
 
 Install the optional integration and authenticate before selecting online
@@ -73,10 +128,8 @@ The rearrangement stage logs lightweight solver NFE and adaptive-step counters
 by default; set `wandb.log_solver_diagnostics: false` in YAML if only loss and
 optimizer metrics are wanted.
 
-For disconnected machines, select `--wandb-mode offline` and later run
-`uv run --extra tracking wandb sync <run-directory>/wandb` (or pass the exact
-`offline-run-*` directory). W&B credentials should be supplied by
-`wandb login` or `WANDB_API_KEY`, never committed to a YAML file.
+W&B credentials should be supplied by `wandb login` or `WANDB_API_KEY`, never
+committed to a YAML file.
 
 Each run writes its configuration, model and trainer checkpoints, histories,
 conformal checkpoint, and `metrics.json` under:

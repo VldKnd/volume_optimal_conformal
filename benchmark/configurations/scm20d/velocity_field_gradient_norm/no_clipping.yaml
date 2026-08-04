@@ -1,0 +1,101 @@
+name: no_clipping
+seed: 0
+save_directory: benchmark/results/scm20d/velocity_field_gradient_norm
+
+dataset_config:
+  type: scm20d
+  file_path: data/scm20d/file1730492b4408.arff
+  x_dim: 61
+  y_dim: 16
+  train_fraction: 0.6
+  calibration_fraction: 0.2
+  test_fraction: 0.2
+  seed: 0
+  device: cuda
+  dtype: float32
+
+predictor_config:
+  type: normalizing_flow
+  x_dim: 61
+  y_dim: 16
+  hidden_dim: 6
+  num_hidden_layers: 5
+  num_flow_layers: 3
+  log_scale_bound: 3.0
+  seed: 0
+  device: cuda
+  dtype: float32
+
+trainer_config:
+  epochs: 5000
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  grad_clip_norm: 1.0
+  use_cosine_scheduler: true
+  verbose: true
+
+predictor_checkpoint: benchmark/results/transport_realnvp_l2/seed_00/base/predictor.pt
+
+rearrangement_config:
+  type: amortized_rearranged_transport
+  x_dim: 61
+  y_dim: 16
+  hidden_dimension: 14
+  number_of_hidden_layers: 4
+  time_dependent: true
+  vector_field_implementation: sparse
+  activation: silu
+  activation_power: 2.0
+  use_adjoint: false
+  method: dopri5
+  rtol: 0.0001
+  atol: 0.00001
+  number_of_steps: null
+  seed: 0
+  device: cuda
+  dtype: float32
+
+rearrangement_trainer_config:
+  epochs: 100
+  coverage_mass: 0.9
+  mc_samples_per_x: 64
+  train_transport_map: false
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  grad_clip_norm: .inf
+  use_cosine_scheduler: true
+  verbose: true
+
+supervised_rearrangement: false
+
+conformal_config:
+  type: transport_based
+  coverage_mass: 0.9
+  calibrator:
+    type: norm
+    p: 2.0
+  volume_mc_samples: 1000
+  volume_batch_size: 1024
+  volume_seed: 0
+
+train_batch_size: 256
+rearrangement_train_batch_size: 256
+calibration_batch_size: 512
+test_batch_size: 512
+compute_volume: true
+metrics_verbose: true
+
+wandb:
+  mode: online
+  project: minimal-volume-conformal-prediction
+  entity: null
+  group: scm20d/velocity_field_gradient_norm
+  name: no_clipping
+  tags:
+    - scm20d
+    - realnvp
+    - dopri5
+    - velocity-field-gradient-norm
+  log_every_n_steps: 20
+  log_solver_diagnostics: true
+
