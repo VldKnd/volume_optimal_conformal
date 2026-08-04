@@ -123,6 +123,7 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
             [inverse],
             lr=self.config.c_transform_lr,
             max_iter=self.config.c_transform_max_iter,
+            line_search_fn="strong_wolfe",
             tolerance_grad=1e-7,
             tolerance_change=1e-7,
         )
@@ -142,8 +143,6 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
                 raise FloatingPointError("Non-finite c-transform objective.")
 
             objective.backward()
-            torch.nn.utils.clip_grad_norm_([inverse], max_norm=10.0)
-
             return objective
 
         try:
@@ -169,7 +168,6 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
                     break
 
                 objective.backward()
-                torch.nn.utils.clip_grad_norm_([inverse], max_norm=10.0)
                 fallback.step()
 
         return inverse.detach()
