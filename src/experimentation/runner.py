@@ -264,6 +264,7 @@ class ExperimentRunner:
             splits.train,
             batch_size=config.train_batch_size,
             shuffle=True,
+            drop_last=True,
         )
         calibration_loader = make_xy_dataloader(
             splits.calibration,
