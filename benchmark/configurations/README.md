@@ -20,7 +20,7 @@ from experimentation import ExperimentRunner, load_experiment_config
 
 config = load_experiment_config(
     "benchmark/configurations/scm20d/"
-    "comparisont_with_residuals/"
+    "base_run/"
     "residual_rf_global_otcp/seed_00.yaml"
 )
 ExperimentRunner(config).run()
@@ -37,14 +37,14 @@ To run only one method, pass its configuration directory:
 
 ```bash
 uv run python scripts/run_benchmark.py \
-  benchmark/configurations/scm20d/comparisont_with_residuals/transport_realnvp_l2
+  benchmark/configurations/scm20d/base_run/transport_realnvp_l2
 ```
 
 A single YAML file can also be selected directly:
 
 ```bash
 uv run python scripts/run_benchmark.py \
-  benchmark/configurations/scm20d/comparisont_with_residuals/transport_realnvp_l2/seed_00.yaml
+  benchmark/configurations/scm20d/base_run/transport_realnvp_l2/seed_00.yaml
 ```
 
 ## Running a configuration suite on Slurm

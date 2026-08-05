@@ -1,0 +1,44 @@
+name: seed_05
+seed: 5
+save_directory: benchmark/results/scm20d/base_run/residual_rf_global_otcp
+
+dataset_config:
+  type: scm20d
+  file_path: data/scm20d/file1730492b4408.arff
+  x_dim: 61
+  y_dim: 16
+  train_fraction: 0.6
+  calibration_fraction: 0.2
+  test_fraction: 0.2
+  seed: 5
+  device: cuda
+  dtype: float32
+
+predictor_config:
+  type: random_forest
+  x_dim: 61
+  y_dim: 16
+  n_estimators: 100
+  max_depth: null
+  seed: 5
+  device: cuda
+  dtype: float32
+
+trainer_config:
+  epochs: 1
+
+conformal_config:
+  type: residual
+  coverage_mass: 0.9
+  calibrator:
+    type: global_otcp
+    seed: 5
+  volume_mc_samples: 1000
+  volume_n_neighbors: 100
+  volume_seed: 5
+
+train_batch_size: 256
+calibration_batch_size: 512
+test_batch_size: 512
+compute_volume: true
+metrics_verbose: true
