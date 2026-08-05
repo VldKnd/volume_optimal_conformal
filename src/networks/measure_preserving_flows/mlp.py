@@ -118,24 +118,23 @@ class MeasurePreservingMLP(nn.Module):
 
         input_dim = x_dim + self.state_dim + time_dim
 
-        layers: list[nn.Module] = [
-            nn.Linear(input_dim, hidden_dim),
-            make_activation(activation, activation_power=activation_power),
-        ]
+        layers: list[nn.Module] = [nn.Linear(input_dim, hidden_dim)]
 
         for _ in range(num_hidden_layers):
-            layers.extend(
-                [
-                    nn.Linear(hidden_dim, hidden_dim),
-                    make_activation(activation, activation_power=activation_power),
-                ]
+            layers.append(
+                make_activation(
+                    activation,
+                    activation_power=activation_power,
+                )
             )
+            layers.append(nn.Linear(hidden_dim, hidden_dim))
+
+        layers.append(make_activation("tanh"))
 
         output_layer = nn.Linear(hidden_dim, self.output_dim)
         nn.init.zeros_(output_layer.weight)
         nn.init.zeros_(output_layer.bias)
         layers.append(output_layer)
-        layers.append(ScaledTanh(initial_scale=1.0))
         self.net = nn.Sequential(*layers)
 
     def _time_feature(
