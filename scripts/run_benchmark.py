@@ -12,6 +12,27 @@ sys.path.insert(0, str(REPOSITORY_ROOT / "src"))
 from experimentation import ExperimentRunner, load_experiment_config
 
 
+def _discover_config_paths(target: Path) -> list[Path]:
+    """Resolve one YAML file or recursively discover YAMLs in a directory."""
+    if target.is_file():
+        if target.suffix.lower() not in {".yaml", ".yml"}:
+            raise ValueError(
+                f"Configuration file must have a .yaml or .yml suffix: {target}"
+            )
+        return [target]
+
+    if not target.is_dir():
+        raise FileNotFoundError(f"Configuration path does not exist: {target}")
+
+    config_paths = sorted(
+        path for path in target.rglob("*")
+        if path.is_file() and path.suffix.lower() in {".yaml", ".yml"}
+    )
+    if not config_paths:
+        raise FileNotFoundError(f"No YAML configurations found in {target}.")
+    return config_paths
+
+
 def _apply_wandb_overrides(config, args):
     """Apply only explicitly provided command-line W&B settings."""
     overrides = {
@@ -42,7 +63,7 @@ def main() -> None:
     parser.add_argument(
         "config_directory",
         type=Path,
-        help="Directory containing YAML configurations.",
+        help="One YAML configuration or a directory searched recursively.",
     )
     parser.add_argument(
         "--wandb-mode",
@@ -86,9 +107,7 @@ def main() -> None:
     if not config_directory.is_absolute():
         config_directory = REPOSITORY_ROOT / config_directory
 
-    config_paths = sorted(config_directory.rglob("*.yaml"))
-    if not config_paths:
-        raise FileNotFoundError(f"No YAML configurations found in {config_directory}.")
+    config_paths = _discover_config_paths(config_directory)
 
     configs = [
         (
