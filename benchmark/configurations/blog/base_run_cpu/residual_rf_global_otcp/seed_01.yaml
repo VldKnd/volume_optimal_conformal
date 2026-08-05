@@ -1,0 +1,60 @@
+name: seed_01
+seed: 1
+save_directory: benchmark/results/blog/base_run/residual_rf_global_otcp
+
+dataset_config:
+  type: blog
+  file_path: data/blog/blogData_train.csv
+  x_dim: 279
+  y_dim: 2
+  train_fraction: 0.6
+  calibration_fraction: 0.2
+  test_fraction: 0.2
+  seed: 1
+  device: cpu
+  dtype: float32
+
+predictor_config:
+  type: random_forest
+  x_dim: 279
+  y_dim: 2
+  n_estimators: 100
+  max_depth: null
+  seed: 1
+  device: cpu
+  dtype: float32
+
+trainer_config:
+  epochs: 1
+
+conformal_config:
+  type: residual
+  coverage_mass: 0.9
+  calibrator:
+    type: global_otcp
+    seed: 1
+  volume_mc_samples: 1000
+  volume_n_neighbors: 100
+  volume_seed: 1
+
+train_batch_size: 4096
+calibration_batch_size: 512
+test_batch_size: 512
+compute_volume: true
+metrics_verbose: true
+
+wandb:
+  mode: online
+  project: minimal-volume-conformal-prediction
+  entity: null
+  group: blog/residual_rf_global_otcp
+  name: residual_rf_global_otcp_seed_01
+  tags:
+    - blog
+    - benchmark-comparison
+    - random-forest
+    - residual
+    - global-otcp
+  job_type: residual_rf_global_otcp
+  log_every_n_steps: 20
+  log_solver_diagnostics: false

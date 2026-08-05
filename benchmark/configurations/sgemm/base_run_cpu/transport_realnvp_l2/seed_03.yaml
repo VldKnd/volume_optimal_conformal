@@ -1,0 +1,68 @@
+name: seed_03
+seed: 3
+save_directory: benchmark/results/sgemm/base_run/transport_realnvp_l2
+
+dataset_config:
+  type: sgemm
+  file_path: data/sgemm/sgemm_product.csv
+  x_dim: 14
+  y_dim: 4
+  train_fraction: 0.6
+  calibration_fraction: 0.2
+  test_fraction: 0.2
+  seed: 3
+  device: cpu
+  dtype: float32
+
+predictor_config:
+  type: normalizing_flow
+  x_dim: 14
+  y_dim: 4
+  hidden_dim: 32
+  num_hidden_layers: 6
+  num_flow_layers: 4
+  log_scale_bound: 3.0
+  seed: 3
+  device: cpu
+  dtype: float32
+
+trainer_config:
+  epochs: 250
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  grad_clip_norm: 1.0
+  use_cosine_scheduler: true
+  verbose: true
+
+conformal_config:
+  type: transport_based
+  coverage_mass: 0.9
+  calibrator:
+    type: norm
+    p: 2.0
+  volume_mc_samples: 1000
+  volume_batch_size: 1024
+  volume_seed: 3
+
+train_batch_size: 4096
+calibration_batch_size: 512
+test_batch_size: 512
+compute_volume: true
+metrics_verbose: true
+
+wandb:
+  mode: online
+  project: minimal-volume-conformal-prediction
+  entity: null
+  group: sgemm/transport_realnvp_l2
+  name: transport_realnvp_l2_seed_03
+  tags:
+    - sgemm
+    - benchmark-comparison
+    - normalizing-flow
+    - realnvp
+    - transport
+    - l2
+  job_type: transport_realnvp_l2
+  log_every_n_steps: 20
+  log_solver_diagnostics: false

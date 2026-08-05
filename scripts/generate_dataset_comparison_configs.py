@@ -287,7 +287,7 @@ def wandb_config(dataset: str, family: str, seed: int) -> dict[str, Any]:
         "project": "minimal-volume-conformal-prediction",
         "entity": None,
         "group": f"{dataset}/{family}",
-        "name": f"seed_{seed:02d}",
+        "name": f"{family}_seed_{seed:02d}",
         "tags": tags,
         "job_type": family,
         "log_every_n_steps": 20,

@@ -1,0 +1,62 @@
+name: seed_03
+seed: 3
+save_directory: benchmark/results/sgemm/base_run/residual_rf_elliptic
+
+dataset_config:
+  type: sgemm
+  file_path: data/sgemm/sgemm_product.csv
+  x_dim: 14
+  y_dim: 4
+  train_fraction: 0.6
+  calibration_fraction: 0.2
+  test_fraction: 0.2
+  seed: 3
+  device: cuda
+  dtype: float32
+
+predictor_config:
+  type: random_forest
+  x_dim: 14
+  y_dim: 4
+  n_estimators: 100
+  max_depth: null
+  seed: 3
+  device: cuda
+  dtype: float32
+
+trainer_config:
+  epochs: 1
+
+conformal_config:
+  type: residual
+  coverage_mass: 0.9
+  calibrator:
+    type: elliptic
+    n_neighbors: 100
+    regularization: 0.0001
+    local_weight: 0.8
+  volume_mc_samples: 1000
+  volume_n_neighbors: 100
+  volume_seed: 3
+
+train_batch_size: 4096
+calibration_batch_size: 512
+test_batch_size: 512
+compute_volume: true
+metrics_verbose: true
+
+wandb:
+  mode: online
+  project: minimal-volume-conformal-prediction
+  entity: null
+  group: sgemm/residual_rf_elliptic
+  name: residual_rf_elliptic_seed_03
+  tags:
+    - sgemm
+    - benchmark-comparison
+    - random-forest
+    - residual
+    - elliptic
+  job_type: residual_rf_elliptic
+  log_every_n_steps: 20
+  log_solver_diagnostics: false

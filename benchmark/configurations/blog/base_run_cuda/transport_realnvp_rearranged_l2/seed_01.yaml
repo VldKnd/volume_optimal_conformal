@@ -1,0 +1,105 @@
+name: seed_01
+seed: 1
+save_directory: benchmark/results/blog/base_run/transport_realnvp_rearranged_l2
+
+dataset_config:
+  type: blog
+  file_path: data/blog/blogData_train.csv
+  x_dim: 279
+  y_dim: 2
+  train_fraction: 0.6
+  calibration_fraction: 0.2
+  test_fraction: 0.2
+  seed: 1
+  device: cuda
+  dtype: float32
+
+predictor_config:
+  type: normalizing_flow
+  x_dim: 279
+  y_dim: 2
+  hidden_dim: 8
+  num_hidden_layers: 4
+  num_flow_layers: 2
+  log_scale_bound: 3.0
+  seed: 1
+  device: cuda
+  dtype: float32
+predictor_checkpoint: benchmark/results/blog/base_run/transport_realnvp_l2/seed_01/base/predictor.pt
+
+trainer_config:
+  epochs: 250
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  grad_clip_norm: 1.0
+  use_cosine_scheduler: true
+  verbose: true
+
+rearrangement_config:
+  type: amortized_rearranged_transport
+  x_dim: 279
+  y_dim: 2
+  hidden_dimension: 16
+  number_of_hidden_layers: 4
+  time_dependent: true
+  vector_field_implementation: sparse
+  activation: silu
+  activation_power: 2.0
+  use_adjoint: false
+  method: dopri5
+  rtol: 0.0001
+  atol: 1.0e-05
+  number_of_steps: null
+  seed: 1
+  device: cuda
+  dtype: float32
+
+rearrangement_trainer_config:
+  epochs: 100
+  mc_samples_per_x: 32
+  train_transport_map: false
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  grad_clip_norm: 1.0
+  use_cosine_scheduler: true
+  verbose: true
+
+supervised_rearrangement: false
+
+conformal_config:
+  type: transport_based
+  coverage_mass: 0.9
+  calibrator:
+    type: norm
+    p: 2.0
+  volume_mc_samples: 1000
+  volume_batch_size: 1024
+  volume_seed: 1
+
+train_batch_size: 4096
+rearrangement_train_batch_size: 512
+calibration_batch_size: 512
+test_batch_size: 512
+compute_volume: true
+metrics_verbose: true
+
+wandb:
+  mode: online
+  project: minimal-volume-conformal-prediction
+  entity: null
+  group: blog/transport_realnvp_rearranged_l2
+  name: transport_realnvp_rearranged_l2_seed_01
+  tags:
+    - blog
+    - benchmark-comparison
+    - normalizing-flow
+    - realnvp
+    - transport
+    - l2
+    - rearranged
+    - amortized
+    - sparse
+    - dopri5
+  job_type: transport_realnvp_rearranged_l2
+  log_every_n_steps: 20
+  log_solver_diagnostics: true

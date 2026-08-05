@@ -2,6 +2,7 @@
 #SBATCH --job-name=run_benchmark
 #SBATCH --gres=gpu:1
 #SBATCH --account=eric
+#SBATCH --time=48:00:00
 #SBATCH --output=logs/%j.out
 #SBATCH --error=logs/%j.err
 
