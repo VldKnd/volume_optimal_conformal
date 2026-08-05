@@ -7,7 +7,7 @@ from configs.datasets.real.base import BaseRealDatasetConfig
 class BioDatasetConfig(BaseRealDatasetConfig):
     type: Literal["bio"] = "bio"
 
-    file_path: Path = Path("data/bio/file22f167620a212.arff")
+    file_path: Path = Path("data/bio/CASP.csv")
 
     x_dim: Literal[8] = 8
     y_dim: Literal[2] = 2
