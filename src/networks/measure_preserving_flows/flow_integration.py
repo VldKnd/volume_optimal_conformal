@@ -161,7 +161,7 @@ class VectorFieldFlow(nn.Module):
     def __init__(
         self,
         vector_field: nn.Module,
-        endpoint_alpha: float = 0.1,
+        endpoint_alpha: float = 0.0,
         alpha: float | None = None,
         use_adjoint: bool = True,
         method: str = "dopri5",
@@ -413,7 +413,7 @@ class GaussianSkewFieldFlow(VectorFieldFlow):
     def __init__(
         self,
         dimension: int,
-        endpoint_alpha: float = 0.1,
+        endpoint_alpha: float = 0.0,
         alpha: float | None = None,
         use_adjoint: bool = True,
         method: str = "dopri5",
