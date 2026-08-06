@@ -27,15 +27,19 @@ predictor_config:
 trainer_config:
   epochs: 1
 
+predictor_checkpoint: benchmark/results/sgemm/base_run/residual_rf_global_otcp/seed_04/base/predictor.pt
+
 conformal_config:
   type: residual
   coverage_mass: 0.9
   calibrator:
     type: global_otcp
     seed: 4
-  volume_mc_samples: 1000
+  volume_mc_samples: 10000
   volume_n_neighbors: 100
   volume_seed: 4
+
+conformal_checkpoint: benchmark/results/sgemm/base_run/residual_rf_global_otcp/seed_04/conformal/predictor.pt
 
 train_batch_size: 4096
 calibration_batch_size: 512

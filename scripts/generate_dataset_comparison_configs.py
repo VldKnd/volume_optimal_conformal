@@ -60,6 +60,17 @@ FAMILIES = (
     "transport_neural_ot_rearranged_l2",
 )
 
+NEURAL_OT_WARMUP_ITERATIONS = {
+    "bio": 50,
+    "blog": 50,
+    "sgemm": 10,
+}
+
+SOFTPLUS_REARRANGEMENT_FAMILIES = (
+    "transport_realnvp_rearranged_l2",
+    "transport_neural_ot_rearranged_l2",
+)
+
 YAML_BLOCKS = (
     ("name", "seed", "save_directory"),
     ("dataset_config",),
@@ -114,7 +125,12 @@ def dump_config(config: dict[str, Any]) -> str:
     return "\n\n".join(blocks) + "\n"
 
 
-def dataset_config(dataset: str, spec: dict[str, Any], seed: int) -> dict[str, Any]:
+def dataset_config(
+    dataset: str,
+    spec: dict[str, Any],
+    seed: int,
+    device: str,
+) -> dict[str, Any]:
     return {
         "type": dataset,
         "file_path": spec["file_path"],
@@ -124,12 +140,14 @@ def dataset_config(dataset: str, spec: dict[str, Any], seed: int) -> dict[str, A
         "calibration_fraction": 0.2,
         "test_fraction": 0.2,
         "seed": seed,
-        "device": "cuda",
+        "device": device,
         "dtype": "float32",
     }
 
 
-def random_forest_config(spec: dict[str, Any], seed: int) -> dict[str, Any]:
+def random_forest_config(
+    spec: dict[str, Any], seed: int, device: str
+) -> dict[str, Any]:
     return {
         "type": "random_forest",
         "x_dim": spec["x_dim"],
@@ -137,12 +155,14 @@ def random_forest_config(spec: dict[str, Any], seed: int) -> dict[str, Any]:
         "n_estimators": 100,
         "max_depth": None,
         "seed": seed,
-        "device": "cuda",
+        "device": device,
         "dtype": "float32",
     }
 
 
-def normalizing_flow_config(spec: dict[str, Any], seed: int) -> dict[str, Any]:
+def normalizing_flow_config(
+    spec: dict[str, Any], seed: int, device: str
+) -> dict[str, Any]:
     return {
         "type": "normalizing_flow",
         "x_dim": spec["x_dim"],
@@ -152,12 +172,14 @@ def normalizing_flow_config(spec: dict[str, Any], seed: int) -> dict[str, Any]:
         "num_flow_layers": spec["normalizing_flow_layers"],
         "log_scale_bound": 3.0,
         "seed": seed,
-        "device": "cuda",
+        "device": device,
         "dtype": "float32",
     }
 
 
-def neural_ot_config(spec: dict[str, Any], seed: int) -> dict[str, Any]:
+def neural_ot_config(
+    spec: dict[str, Any], seed: int, device: str
+) -> dict[str, Any]:
     return {
         "type": "neural_optimal_transport",
         "x_dim": spec["x_dim"],
@@ -168,12 +190,14 @@ def neural_ot_config(spec: dict[str, Any], seed: int) -> dict[str, Any]:
         "c_transform_lr": 1.0,
         "c_transform_max_iter": 1_000,
         "seed": seed,
-        "device": "cuda",
+        "device": device,
         "dtype": "float32",
     }
 
 
-def base_trainer_config(predictor_type: str) -> dict[str, Any]:
+def base_trainer_config(
+    predictor_type: str, warmup_iterations: int
+) -> dict[str, Any]:
     if predictor_type == "random_forest":
         return {"epochs": 1}
 
@@ -190,7 +214,7 @@ def base_trainer_config(predictor_type: str) -> dict[str, Any]:
             "epochs": 250,
             "learning_rate": 0.001,
             "weight_decay": 0.0001,
-            "warmup_iterations": 1,
+            "warmup_iterations": warmup_iterations,
             "grad_clip_norm": 1.0,
             "use_cosine_scheduler": True,
             "verbose": True,
@@ -198,7 +222,9 @@ def base_trainer_config(predictor_type: str) -> dict[str, Any]:
     return config
 
 
-def rearrangement_config(spec: dict[str, Any], seed: int) -> dict[str, Any]:
+def rearrangement_config(
+    spec: dict[str, Any], seed: int, device: str
+) -> dict[str, Any]:
     return {
         "type": "amortized_rearranged_transport",
         "x_dim": spec["x_dim"],
@@ -215,7 +241,7 @@ def rearrangement_config(spec: dict[str, Any], seed: int) -> dict[str, Any]:
         "atol": 0.00001,
         "number_of_steps": None,
         "seed": seed,
-        "device": "cuda",
+        "device": device,
         "dtype": "float32",
     }
 
@@ -300,21 +326,24 @@ def make_config(dataset: str, family: str, seed: int) -> dict[str, Any]:
     is_residual = family.startswith("residual_rf")
     is_neural_ot = "neural_ot" in family
     is_rearranged = "rearranged" in family
+    device = "cpu" if is_residual else "cuda"
 
     if is_residual:
-        predictor = random_forest_config(spec, seed)
+        predictor = random_forest_config(spec, seed, device)
     elif is_neural_ot:
-        predictor = neural_ot_config(spec, seed)
+        predictor = neural_ot_config(spec, seed, device)
     else:
-        predictor = normalizing_flow_config(spec, seed)
+        predictor = normalizing_flow_config(spec, seed, device)
 
     config: dict[str, Any] = {
         "name": f"seed_{seed:02d}",
         "seed": seed,
         "save_directory": f"benchmark/results/{dataset}/base_run/{family}",
-        "dataset_config": dataset_config(dataset, spec, seed),
+        "dataset_config": dataset_config(dataset, spec, seed, device),
         "predictor_config": predictor,
-        "trainer_config": base_trainer_config(predictor["type"]),
+        "trainer_config": base_trainer_config(
+            predictor["type"], NEURAL_OT_WARMUP_ITERATIONS[dataset]
+        ),
     }
 
     if is_rearranged:
@@ -323,7 +352,9 @@ def make_config(dataset: str, family: str, seed: int) -> dict[str, Any]:
             f"benchmark/results/{dataset}/base_run/{base_family}/seed_{seed:02d}"
             "/base/predictor.pt"
         )
-        config["rearrangement_config"] = rearrangement_config(spec, seed)
+        config["rearrangement_config"] = rearrangement_config(
+            spec, seed, device
+        )
         config["rearrangement_trainer_config"] = rearrangement_trainer_config()
         config["supervised_rearrangement"] = False
 
@@ -350,12 +381,47 @@ def make_config(dataset: str, family: str, seed: int) -> dict[str, Any]:
     return config
 
 
+def make_softplus_rearrangement_config(
+    dataset: str,
+    family: str,
+    seed: int,
+) -> dict[str, Any]:
+    if dataset not in {"bio", "blog"}:
+        raise ValueError(
+            "Softplus rearrangement configurations are defined only for "
+            "Bio and Blog."
+        )
+    if family not in SOFTPLUS_REARRANGEMENT_FAMILIES:
+        raise ValueError(f"Unsupported softplus rearrangement family: {family}")
+
+    config = make_config(dataset, family, seed)
+    base_family = family.replace("_rearranged", "")
+    config["save_directory"] = (
+        f"benchmark/results/{dataset}/softplus_rearrangement/{family}"
+    )
+    config["predictor_checkpoint"] = (
+        f"benchmark/results/{dataset}/base_run/{base_family}/"
+        f"seed_{seed:02d}/base/predictor.pt"
+    )
+    config["rearrangement_config"]["activation"] = "softplus"
+
+    wandb = config["wandb"]
+    wandb["group"] = f"{dataset}/softplus_rearrangement/{family}"
+    wandb["name"] = f"{family}_softplus_seed_{seed:02d}"
+    wandb["tags"].append("softplus")
+    wandb["job_type"] = f"{family}_softplus"
+    return config
+
+
 def main() -> None:
     for dataset in DATASETS:
-        suite_directory = (
-            CONFIGURATION_ROOT / dataset / "base_run"
-        )
         for family in FAMILIES:
+            suite_name = (
+                "base_run_cpu"
+                if family.startswith("residual_rf")
+                else "base_run_cuda"
+            )
+            suite_directory = CONFIGURATION_ROOT / dataset / suite_name
             family_directory = suite_directory / family
             family_directory.mkdir(parents=True, exist_ok=True)
             for seed in range(5):
@@ -365,7 +431,28 @@ def main() -> None:
                     encoding="utf-8",
                 )
 
-    count = len(DATASETS) * len(FAMILIES) * 5
+    for dataset in ("bio", "blog"):
+        suite_directory = (
+            CONFIGURATION_ROOT / dataset / "softplus_rearrangement"
+        )
+        for family in SOFTPLUS_REARRANGEMENT_FAMILIES:
+            family_directory = suite_directory / family
+            family_directory.mkdir(parents=True, exist_ok=True)
+            for seed in range(5):
+                path = family_directory / f"seed_{seed:02d}.yaml"
+                path.write_text(
+                    dump_config(
+                        make_softplus_rearrangement_config(
+                            dataset, family, seed
+                        )
+                    ),
+                    encoding="utf-8",
+                )
+
+    count = (
+        len(DATASETS) * len(FAMILIES) * 5
+        + 2 * len(SOFTPLUS_REARRANGEMENT_FAMILIES) * 5
+    )
     print(f"Generated {count} benchmark configurations.")
 
 

@@ -40,6 +40,17 @@ from trainers import rearranged_transport as rearranged_trainers
 from trainers import transport as transport_trainers
 
 
+def _conformal_calibration_settings(config: Any) -> dict[str, Any]:
+    """Return only settings that affect the fitted conformal state."""
+    return config.model_dump(
+        exclude={
+            "volume_mc_samples",
+            "volume_batch_size",
+            "volume_seed",
+        }
+    )
+
+
 class ExperimentRunner:
     """Train, calibrate, evaluate, and save one configured experiment."""
 
@@ -371,13 +382,17 @@ class ExperimentRunner:
                 weights_only=False,
             )
             saved_config = conformal_config_class.model_validate(checkpoint["config"])
-            if saved_config != config.conformal_config:
+            if _conformal_calibration_settings(saved_config
+                                               ) != _conformal_calibration_settings(
+                                                   config.conformal_config
+                                               ):
                 raise ValueError(
-                    "Loaded conformal checkpoint has a different configuration."
+                    "Loaded conformal checkpoint has different calibration "
+                    "settings."
                 )
             self.conformal_predictor = conformal_class(
                 predictor=final_predictor,
-                config=saved_config,
+                config=config.conformal_config,
             )
             self.conformal_predictor.calibrator = checkpoint["calibrator"]
             if residual_conformal:
