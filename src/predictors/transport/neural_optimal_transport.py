@@ -217,7 +217,7 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
         self,
         x: torch.Tensor,
         u: torch.Tensor,
-        jitter: float = 1e-4,
+        jitter: float = 0.0,
         create_graph: bool | None = None,
     ) -> torch.Tensor:
         """
@@ -240,7 +240,7 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
         self,
         x: torch.Tensor,
         u: torch.Tensor,
-        jitter: float = 1e-6,
+        jitter: float = 0.0,
         create_graph: bool | None = None,
     ) -> torch.Tensor:
         """
@@ -253,8 +253,9 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
         Args:
             x: (batch, x_dim)
             u: (batch, y_dim)
-            jitter: non-negative diagonal jitter added before taking the
-                determinant.
+            jitter: optional non-negative diagonal jitter added before taking
+                the determinant. Defaults to zero because PISCNN is strongly
+                convex.
 
         Returns:
             log_det: (batch,)
@@ -346,7 +347,6 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
             hessian_rows.append(row)
 
         hessian = torch.stack(hessian_rows, dim=1)
-        hessian = 0.5 * (hessian + hessian.transpose(-2, -1))
 
         if jitter > 0.0:
             identity = torch.eye(
@@ -368,7 +368,7 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
             ).flatten()[:5].detach().cpu().tolist()
             raise RuntimeError(
                 "Failed to compute Neural OT log-det: Hessian is not positive "
-                f"definite after adding jitter={jitter}. "
+                f"definite with jitter={jitter}. "
                 f"Failed batch indexes include {failed_indexes}."
             )
 

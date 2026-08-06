@@ -30,6 +30,18 @@ class SGEMMDataset(BaseRealDataset):
                 "expected schema."
             )
 
-        data = np.loadtxt(self.file_path, delimiter=",", skiprows=1)
+        data = np.loadtxt(
+            self.file_path,
+            delimiter=",",
+            skiprows=1,
+            ndmin=2,
+        )
         feature_names = column_names[:-self.y_dim]
-        return data[:, :-self.y_dim], data[:, -self.y_dim:], feature_names
+        targets = data[:, -self.y_dim:]
+        if not np.isfinite(targets).all() or np.any(targets <= 0.0):
+            raise ValueError(
+                "SGEMM runtimes must be finite and strictly positive before "
+                "applying the logarithmic target transform."
+            )
+
+        return data[:, :-self.y_dim], np.log(targets), feature_names
