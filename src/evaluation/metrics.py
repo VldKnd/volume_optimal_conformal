@@ -9,7 +9,7 @@ def log_volume(
     dataloader: DataLoader,
     conformal_predictor: ConformalPredictor,
 ) -> tuple[float, float]:
-    """Return mean and population std of log-volume per output dimension."""
+    """Summarize log-volume per dimension, excluding zero-volume estimates."""
     log_volumes = []
 
     for x_batch, _ in dataloader:
@@ -30,6 +30,10 @@ def log_volume(
         raise ValueError("Validation dataloader must not be empty.")
 
     log_volumes = torch.cat(log_volumes)
+    log_volumes = log_volumes[~torch.isneginf(log_volumes)]
+    if log_volumes.numel() == 0:
+        return -torch.inf, 0.0
+
     return (
         float(log_volumes.mean()),
         float(log_volumes.std(unbiased=False)),
