@@ -47,7 +47,7 @@ rearrangement_config:
   vector_field_implementation: sparse
   activation: silu
   activation_power: 2.0
-  use_adjoint: false
+  use_adjoint: true
   method: dopri5
   rtol: 0.0001
   atol: 1.0e-05
@@ -58,7 +58,7 @@ rearrangement_config:
 
 rearrangement_trainer_config:
   epochs: 100
-  mc_samples_per_x: 32
+  mc_samples_per_x: 64
   train_transport_map: false
   learning_rate: 0.001
   weight_decay: 0.0001
@@ -78,7 +78,7 @@ conformal_config:
   volume_batch_size: 1024
   volume_seed: 4
 
-train_batch_size: 4096
+train_batch_size: 1024
 rearrangement_train_batch_size: 512
 calibration_batch_size: 512
 test_batch_size: 512
