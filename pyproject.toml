@@ -31,6 +31,12 @@ dependencies = [
     "nbconvert>=7.17.1",
     "torchdiffeq>=0.2.5",
     "lightgbm>=4.7.0",
+    "torch-geometric>=2.8.0.post1",
+    "dscribe>=2.1.2",
+    # DScribe 2.1.2 still calls ase.Atoms with ASE 3 positional arguments.
+    # ASE 3.27+ changed that compatibility signature, so keep the latest
+    # compatible ASE release until DScribe publishes support for it.
+    "ase>=3.26.0,<3.27",
 ]
 
 [project.optional-dependencies]
