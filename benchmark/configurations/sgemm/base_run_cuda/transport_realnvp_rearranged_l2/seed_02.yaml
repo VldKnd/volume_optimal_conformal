@@ -88,7 +88,7 @@ wandb:
   project: minimal-volume-conformal-prediction
   entity: null
   group: sgemm/transport_realnvp_rearranged_l2
-  name: transport_realnvp_rearranged_l2_seed_02
+  name: experimental_transport_realnvp_rearranged_l2_seed_02
   tags:
     - sgemm
     - benchmark-comparison
