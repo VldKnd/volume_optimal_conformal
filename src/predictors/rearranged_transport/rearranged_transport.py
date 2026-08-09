@@ -96,7 +96,7 @@ class RearrangedTransportPredictor(
             rtol=config.rtol,
             atol=config.atol,
             number_of_steps=config.number_of_steps,
-            endpoint_alpha=0.1,
+            endpoint_alpha=1.,
             hidden_dimension=config.hidden_dimension,
             number_of_hidden_layers=config.number_of_hidden_layers,
             time_dependent=config.time_dependent,
