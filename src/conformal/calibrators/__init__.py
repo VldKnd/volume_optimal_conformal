@@ -1,4 +1,5 @@
 from configs.calibrators import (
+    CDFCalibratorConfig,
     CalibratorConfig,
     EllipticCalibratorConfig,
     GlobalOTCPCalibratorConfig,
@@ -10,6 +11,7 @@ from configs.calibrators import (
     NormCalibratorConfig,
 )
 from conformal.calibrators.base import BaseCalibrator
+from conformal.calibrators.cdf_calibrator import CDFCalibrator
 from conformal.calibrators.elliptic_calibrator import EllipticCalibrator
 from conformal.calibrators.factory import create_calibrator, make_calibrator
 from conformal.calibrators.log_probability_calibrator import (
@@ -27,6 +29,8 @@ from conformal.calibrators.quantile import conformal_quantile
 
 __all__ = [
     "BaseCalibrator",
+    "CDFCalibrator",
+    "CDFCalibratorConfig",
     "CalibratorConfig",
     "EllipticCalibrator",
     "EllipticCalibratorConfig",

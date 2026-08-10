@@ -1,4 +1,5 @@
 from configs.calibrators import (
+    CDFCalibratorConfig,
     CalibratorConfig,
     EllipticCalibratorConfig,
     GlobalOTCPCalibratorConfig,
@@ -8,6 +9,7 @@ from configs.calibrators import (
     NormCalibratorConfig,
 )
 from conformal.calibrators.base import BaseCalibrator
+from conformal.calibrators.cdf_calibrator import CDFCalibrator
 from conformal.calibrators.elliptic_calibrator import EllipticCalibrator
 from conformal.calibrators.log_probability_calibrator import (
     LogProbabilityCalibrator,
@@ -22,6 +24,9 @@ from conformal.calibrators.optimal_transport_calibrator import (
 
 def make_calibrator(config: CalibratorConfig) -> BaseCalibrator:
     """Construct the calibrator selected by a validated config."""
+    if isinstance(config, CDFCalibratorConfig):
+        return CDFCalibrator(config)
+
     if isinstance(config, NormCalibratorConfig):
         return NormCalibrator(config)
 
@@ -42,8 +47,9 @@ def make_calibrator(config: CalibratorConfig) -> BaseCalibrator:
 
     raise TypeError(
         "Unsupported calibrator config type "
-        f"{type(config).__name__}. Expected NormCalibratorConfig, "
-        "EllipticCalibratorConfig, GlobalOTCPCalibratorConfig, "
+        f"{type(config).__name__}. Expected CDFCalibratorConfig, "
+        "NormCalibratorConfig, EllipticCalibratorConfig, "
+        "GlobalOTCPCalibratorConfig, "
         "LogProbabilityCalibratorConfig, LocalOTCPCalibratorConfig, or "
         "NoCalibratorConfig."
     )

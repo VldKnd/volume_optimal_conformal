@@ -2,6 +2,7 @@ from typing import Annotated
 
 from pydantic import Field
 
+from configs.calibrators.cdf_calibrator import CDFCalibratorConfig
 from configs.calibrators.elliptic_calibrator import EllipticCalibratorConfig
 from configs.calibrators.log_probability_calibrator import (
     LogPCalibratorConfig,
@@ -16,7 +17,8 @@ from configs.calibrators.optimal_transport_calibrator import (
 )
 
 CalibratorConfig = Annotated[
-    EllipticCalibratorConfig
+    CDFCalibratorConfig
+    | EllipticCalibratorConfig
     | GlobalOTCPCalibratorConfig
     | LogProbabilityCalibratorConfig
     | LocalOTCPCalibratorConfig
@@ -27,6 +29,7 @@ CalibratorConfig = Annotated[
 
 __all__ = [
     "CalibratorConfig",
+    "CDFCalibratorConfig",
     "EllipticCalibratorConfig",
     "GlobalOTCPCalibratorConfig",
     "LogPCalibratorConfig",

@@ -8,12 +8,14 @@ import torch
 from sklearn.neighbors import NearestNeighbors
 from torch.utils.data import DataLoader
 
+from configs.calibrators.cdf_calibrator import CDFCalibratorConfig
 from configs.calibrators.log_probability_calibrator import (
     LogProbabilityCalibratorConfig,
 )
 from configs.conformal import TransportBasedConformalPredictorConfig
 from conformal.base import ConformalPredictor
 from conformal.calibrators.base import BaseCalibrator
+from conformal.calibrators.cdf_calibrator import CDFCalibrator
 from conformal.calibrators.factory import make_calibrator
 from conformal.calibrators.log_probability_calibrator import (
     LogProbabilityCalibrator,
@@ -41,13 +43,22 @@ class TransportBasedConformalPredictor(ConformalPredictor):
         if not isinstance(config, TransportBasedConformalPredictorConfig):
             config = TransportBasedConformalPredictorConfig.model_validate(config)
 
+        density_calibrator = isinstance(
+            config.calibrator,
+            (CDFCalibratorConfig, LogProbabilityCalibratorConfig),
+        )
+        if density_calibrator and not callable(getattr(predictor, "log_prob", None)):
+            raise TypeError(
+                "The configured density calibrator requires the base predictor "
+                "to implement a callable log_prob(x, y) method."
+            )
         if (
-            isinstance(config.calibrator, LogProbabilityCalibratorConfig)
-            and not callable(getattr(predictor, "log_prob", None))
+            isinstance(config.calibrator, CDFCalibratorConfig)
+            and not callable(getattr(predictor, "sample", None))
         ):
             raise TypeError(
-                "The log-probability calibrator requires the base predictor "
-                "to implement a callable log_prob(x, y) method."
+                "CDFCalibrator requires the base predictor to implement a "
+                "callable sample(x, n_samples) method."
             )
 
         self._validate_predictor(predictor)
@@ -79,10 +90,10 @@ class TransportBasedConformalPredictor(ConformalPredictor):
         """Fit the calibrator from batched ``(x, y)`` observations.
 
         Predictor scores are evaluated one dataloader batch at a time on the
-        predictor device. The log-probability calibrator uses conditional log
-        densities; all other calibrators use latent pullbacks. Detached
-        covariates and scores are accumulated on CPU, so calibration does not
-        require the full dataset to fit in accelerator memory.
+        predictor device. Density calibrators use conditional log densities;
+        all other calibrators use latent pullbacks. Detached covariates and
+        scores are accumulated on CPU, so calibration does not require the
+        full dataset to fit in accelerator memory.
         """
         if dataloader is None:
             raise ValueError("dataloader must be provided for calibration.")
@@ -107,7 +118,12 @@ class TransportBasedConformalPredictor(ConformalPredictor):
                 continue
 
             with torch.no_grad():
-                if isinstance(self.calibrator, LogProbabilityCalibrator):
+                if isinstance(self.calibrator, CDFCalibrator):
+                    scores = self._cdf_scores(
+                        x=x_batch,
+                        y=y_batch,
+                    )
+                elif isinstance(self.calibrator, LogProbabilityCalibrator):
                     scores = self._log_probability_scores(
                         x=x_batch,
                         y=y_batch,
@@ -134,7 +150,7 @@ class TransportBasedConformalPredictor(ConformalPredictor):
                     dtype=cpu_dtype,
                 )
             )
-            if isinstance(self.calibrator, LogProbabilityCalibrator):
+            if self._uses_observation_scores():
                 calibration_y.append(
                     y_batch.detach().to(
                         device="cpu",
@@ -154,7 +170,7 @@ class TransportBasedConformalPredictor(ConformalPredictor):
             coverage_mass=self.coverage_mass,
         )
 
-        if isinstance(self.calibrator, LogProbabilityCalibrator):
+        if self._uses_observation_scores():
             self.calibration_x = fitted_x
             self.calibration_y = torch.cat(calibration_y, dim=0)
             if self.x_dim > 0:
@@ -198,10 +214,25 @@ class TransportBasedConformalPredictor(ConformalPredictor):
         x: torch.Tensor,
         y: torch.Tensor,
     ) -> torch.Tensor:
+        if isinstance(self.calibrator, CDFCalibrator):
+            return self.cdf_score(x=x, y=y).unsqueeze(-1)
+
         if isinstance(self.calibrator, LogProbabilityCalibrator):
             return self.log_prob(x=x, y=y).unsqueeze(-1)
 
         return self.pullback(x=x, y=y)
+
+    def cdf_score(
+        self,
+        x: torch.Tensor,
+        y: torch.Tensor,
+    ) -> torch.Tensor:
+        """Estimate the conditional density-rank score for each observation."""
+        if not isinstance(self.calibrator, CDFCalibrator):
+            raise RuntimeError("cdf_score() requires the configured CDFCalibrator.")
+
+        x, y = self._prepare_inputs(x=x, point=y, point_name="y")
+        return self._cdf_scores(x=x, y=y)[:, 0]
 
     def log_prob(
         self,
@@ -242,8 +273,8 @@ class TransportBasedConformalPredictor(ConformalPredictor):
 
         ``log Vol(B_r) + log E[exp(log |det D T_x(U)|)]``
 
-        for ``U`` uniform in ``B_r``. For a log-probability level set, it uses
-        the same local bounding-box rejection estimator as OT-CP regions.
+        for ``U`` uniform in ``B_r``. For density-based regions, it uses the
+        same local bounding-box rejection estimator as OT-CP regions.
 
         ``batch_size`` bounds the number of flattened covariate/point pairs
         passed to the predictor in any one call.
@@ -253,8 +284,8 @@ class TransportBasedConformalPredictor(ConformalPredictor):
         if x.shape[0] == 0:
             return x.new_empty(0)
 
-        if isinstance(self.calibrator, LogProbabilityCalibrator):
-            return self._estimate_log_probability_log_volume(
+        if self._uses_observation_scores():
+            return self._estimate_observation_score_log_volume(
                 x=x,
                 number_of_samples=number_of_samples,
                 batch_size=batch_size,
@@ -366,14 +397,14 @@ class TransportBasedConformalPredictor(ConformalPredictor):
         )
         return (log_ball_volume + log_integral - math.log(number_of_samples))
 
-    def _estimate_log_probability_log_volume(
+    def _estimate_observation_score_log_volume(
         self,
         x: torch.Tensor,
         number_of_samples: int | None,
         batch_size: int | None,
         seed: int | None,
     ) -> torch.Tensor:
-        """Estimate density-level-set volume in a local calibration box.
+        """Estimate a density-score region's volume in a calibration box.
 
         This is the same rejection Monte Carlo construction used for OT-CP
         residual regions: nearby calibration observations define a bounding
@@ -382,7 +413,7 @@ class TransportBasedConformalPredictor(ConformalPredictor):
         """
         if self.calibration_x is None or self.calibration_y is None:
             raise RuntimeError(
-                "Calibration observations are unavailable for log-probability "
+                "Calibration observations are unavailable for density-score "
                 "volume estimation."
             )
 
@@ -476,6 +507,89 @@ class TransportBasedConformalPredictor(ConformalPredictor):
             device=x.device,
             dtype=x.dtype,
         )
+
+    def _cdf_scores(
+        self,
+        x: torch.Tensor,
+        y: torch.Tensor,
+    ) -> torch.Tensor:
+        if not isinstance(self.calibrator, CDFCalibrator):
+            raise RuntimeError("CDF scores require a configured CDFCalibrator.")
+
+        batch_size = x.shape[0]
+        if batch_size == 0:
+            return x.new_empty((0, 1))
+
+        n_samples = self.calibrator.config.n_cdf_samples
+        observed_log_probabilities = self._log_probability_scores(
+            x=x,
+            y=y,
+        )[:, 0]
+        samples_per_call = max(
+            1,
+            self.calibrator.config.cdf_batch_size // batch_size,
+        )
+        samples_completed = 0
+        higher_density_counts = torch.zeros(
+            batch_size,
+            device=self.device,
+            dtype=self.dtype,
+        )
+
+        while samples_completed < n_samples:
+            chunk_size = min(
+                samples_per_call,
+                n_samples - samples_completed,
+            )
+            sampled_y = self._sample_predictor(
+                x=x,
+                n_samples=chunk_size,
+            )
+            expanded_x = x[:, None, :].expand(
+                batch_size,
+                chunk_size,
+                self.x_dim,
+            ).reshape(batch_size * chunk_size, self.x_dim)
+            sampled_log_probabilities = self._log_probability_scores(
+                x=expanded_x,
+                y=sampled_y.reshape(batch_size * chunk_size, self.y_dim),
+            ).reshape(batch_size, chunk_size)
+            higher_density_counts += (
+                observed_log_probabilities[:, None] <= sampled_log_probabilities
+            ).sum(dim=1)
+            samples_completed += chunk_size
+
+        return (higher_density_counts / n_samples).unsqueeze(-1)
+
+    def _sample_predictor(
+        self,
+        x: torch.Tensor,
+        n_samples: int,
+    ) -> torch.Tensor:
+        self._set_predictor_eval()
+        method = getattr(self.predictor, "sample")
+        kwargs = {
+            "x": x,
+            "n_samples": n_samples,
+        }
+        if self._coverage_conditioned:
+            kwargs["coverage_mass"] = self.coverage_mass
+        samples = method(**kwargs)
+
+        if not isinstance(samples, torch.Tensor):
+            raise TypeError(
+                "predictor.sample must return a torch.Tensor, got "
+                f"{type(samples).__name__}."
+            )
+
+        expected_shape = (x.shape[0], n_samples, self.y_dim)
+        if tuple(samples.shape) != expected_shape:
+            raise ValueError(
+                "predictor.sample must return samples with shape "
+                f"{expected_shape}, got {tuple(samples.shape)}."
+            )
+
+        return samples.to(device=self.device, dtype=self.dtype)
 
     def _log_probability_scores(
         self,
@@ -664,6 +778,12 @@ class TransportBasedConformalPredictor(ConformalPredictor):
 
         return torch.float32
 
+    def _uses_observation_scores(self) -> bool:
+        return isinstance(
+            self.calibrator,
+            (CDFCalibrator, LogProbabilityCalibrator),
+        )
+
     def _validate_calibration_scores(
         self,
         scores: Any,
@@ -671,13 +791,11 @@ class TransportBasedConformalPredictor(ConformalPredictor):
     ) -> None:
         if not isinstance(scores, torch.Tensor):
             raise TypeError(
-                "predictor.pullback must return a torch.Tensor, got "
+                "The predictor must return calibration scores as a torch.Tensor, got "
                 f"{type(scores).__name__}."
             )
 
-        score_dimension = (
-            1 if isinstance(self.calibrator, LogProbabilityCalibrator) else self.y_dim
-        )
+        score_dimension = 1 if self._uses_observation_scores() else self.y_dim
         expected_shape = (batch_size, score_dimension)
         if tuple(scores.shape) != expected_shape:
             raise ValueError(
