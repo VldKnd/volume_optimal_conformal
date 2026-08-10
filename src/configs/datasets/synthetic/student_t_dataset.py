@@ -25,7 +25,11 @@ class StudentTDatasetConfig(BaseModel):
     k: float = Field(
         default=1.0,
         gt=0.0,
-        description="Positive parameter defining the diagonal scale matrix.",
+        description=(
+            "Positive parameter defining the determinant-one diagonal scale "
+            "matrix with first entry k ** (1 - 1/d) and all remaining "
+            "entries k ** (-1/d)."
+        ),
     )
 
     seed: int = 0

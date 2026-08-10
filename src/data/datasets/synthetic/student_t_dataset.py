@@ -1,12 +1,23 @@
 """Unconditional multivariate Student-t synthetic dataset."""
 
 import math
+from numbers import Real
+from typing import NamedTuple
 
 import torch
+from scipy.stats import f as f_distribution
 
 from configs.datasets.synthetic.student_t_dataset import StudentTDatasetConfig
 from data.datasets.base import DatasetSplits, XYData
 from data.datasets.synthetic.base import BaseSyntheticDataset
+
+
+class StudentTHDR(NamedTuple):
+    """Analytic geometry of a centered multivariate Student-t HDR."""
+
+    radius: float
+    semi_axis_lengths: torch.Tensor
+    volume: float
 
 
 class StudentTDataset(BaseSyntheticDataset):
@@ -15,7 +26,10 @@ class StudentTDataset(BaseSyntheticDataset):
     Every condition is the one-dimensional zero vector. For target dimension
     ``d``, the Student-t scale matrix is diagonal with entries
 
-    ``(k ** (1 - 1/d), k ** (1/d), ..., k ** (1/d))``.
+    ``(k ** (1 - 1/d), k ** (-1/d), ..., k ** (-1/d))``.
+
+    The exponents sum to zero, so the scale matrix has determinant one for
+    every positive ``k`` and every target dimension ``d``.
 
     Samples use the canonical multivariate Student-t construction
 
@@ -34,7 +48,7 @@ class StudentTDataset(BaseSyntheticDataset):
         self._generator = torch.Generator(device="cpu")
         self._generator.manual_seed(config.seed)
 
-        repeated_entry = config.k**(1.0 / config.y_dim)
+        repeated_entry = config.k**(-1.0 / config.y_dim)
         first_entry = config.k**(1.0 - 1.0 / config.y_dim)
         scale_diagonal = torch.full(
             (config.y_dim, ),
@@ -82,6 +96,51 @@ class StudentTDataset(BaseSyntheticDataset):
     @property
     def supports_density(self) -> bool:
         return True
+
+    def hdr(self, alpha: float) -> StudentTHDR:
+        """Return the analytic ``(1 - alpha)`` highest-density region.
+
+        The region is the axis-aligned ellipsoid
+
+        ``sum_i y_i**2 / sigma_i <= radius**2``,
+
+        where ``sigma_i`` are the diagonal entries of ``scale_matrix`` and
+        ``radius**2 = d * F^{-1}_{d, nu}(1 - alpha)``.
+        """
+        if isinstance(alpha, bool) or not isinstance(alpha, Real):
+            raise TypeError("alpha must be a real number.")
+        alpha = float(alpha)
+        if not math.isfinite(alpha) or not 0.0 < alpha < 1.0:
+            raise ValueError("alpha must lie strictly between zero and one.")
+
+        dimension = self.y_dim
+        radius_squared = dimension * float(
+            f_distribution.ppf(
+                1.0 - alpha,
+                dimension,
+                self.config.nu,
+            )
+        )
+        if not math.isfinite(radius_squared) or radius_squared <= 0.0:
+            raise RuntimeError("The Student-t HDR F quantile is invalid.")
+
+        radius = math.sqrt(radius_squared)
+        semi_axis_lengths = radius * self._coordinate_scales
+        log_unit_ball_volume = (
+            0.5 * dimension * math.log(math.pi) - math.lgamma(0.5 * dimension + 1.0)
+        )
+        log_scale_volume = 0.5 * float(
+            torch.log(self._scale_diagonal).sum().detach().cpu()
+        )
+        volume = math.exp(
+            log_unit_ball_volume + log_scale_volume + dimension * math.log(radius)
+        )
+
+        return StudentTHDR(
+            radius=radius,
+            semi_axis_lengths=semi_axis_lengths,
+            volume=volume,
+        )
 
     def mean(self, x: torch.Tensor) -> torch.Tensor:
         """Return the zero center; the distribution is independent of ``x``."""

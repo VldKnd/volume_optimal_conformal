@@ -144,3 +144,32 @@ coverage risk, and log-volume-per-dimension summaries.
 Volume estimation is the expensive part of these configurations, especially
 for neural OT and CPflow. Reduce `volume_mc_samples` for quick smoke runs
 before launching the full benchmark.
+
+## Student-t benchmark
+
+The Student-t suite contains 160 configurations below
+`benchmark/configurations/student_t`: four target dimensions, four values of
+`k`, five seeds, and both base and amortized-rearranged Neural OT runs. All
+targets use `nu=3` and the determinant-one diagonal scale matrix implemented by
+`StudentTDataset`.
+
+Generate or refresh the suite with:
+
+```bash
+uv run python scripts/generate_student_t_benchmark_configs.py
+```
+
+Run the complete suite sequentially with the dedicated runner so that the
+analytic Student-t HDR comparison is included in `metrics.json`:
+
+```bash
+uv run python scripts/run_student_t_benchmark.py \
+  benchmark/configurations/student_t
+```
+
+The base family sorts before the rearranged family within each parameter
+setting. Therefore, sequential execution creates each Neural OT checkpoint
+before the matching rearranged configuration loads it. When scheduling runs
+independently, complete the `transport_neural_ot_l2` configurations before
+submitting their corresponding `transport_neural_ot_rearranged_l2`
+configurations.
