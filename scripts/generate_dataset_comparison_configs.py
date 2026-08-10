@@ -1,12 +1,12 @@
-"""Generate the Bio, Blog, and SGEMM benchmark comparison suites."""
+"""Generate the real-dataset benchmark comparison suites."""
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 from typing import Any
 
 import yaml
-
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 CONFIGURATION_ROOT = REPOSITORY_ROOT / "benchmark/configurations"
@@ -48,6 +48,19 @@ DATASETS: dict[str, dict[str, Any]] = {
         "rearrangement_hidden_dimension": 64,
         "rearrangement_hidden_layers": 8,
     },
+    "qm9": {
+        "file_path": "data/qm9/qm9_mbtr_100.npz",
+        "raw_root": "data/qm9/pyg",
+        "x_dim": 100,
+        "y_dim": 4,
+        "normalizing_flow_hidden_dim": 18,
+        "normalizing_flow_hidden_layers": 4,
+        "normalizing_flow_layers": 4,
+        "neural_ot_hidden_dim": 16,
+        "neural_ot_hidden_layers": 8,
+        "rearrangement_hidden_dimension": 34,
+        "rearrangement_hidden_layers": 8,
+    },
 }
 
 FAMILIES = (
@@ -64,6 +77,14 @@ NEURAL_OT_WARMUP_ITERATIONS = {
     "bio": 50,
     "blog": 50,
     "sgemm": 10,
+    "qm9": 10,
+}
+
+OTCP_VOLUME_MC_SAMPLES = {
+    "bio": 1_000,
+    "blog": 1_000,
+    "sgemm": 10_000,
+    "qm9": 10_000,
 }
 
 SOFTPLUS_REARRANGEMENT_FAMILIES = (
@@ -73,12 +94,12 @@ SOFTPLUS_REARRANGEMENT_FAMILIES = (
 
 YAML_BLOCKS = (
     ("name", "seed", "save_directory"),
-    ("dataset_config",),
+    ("dataset_config", ),
     ("predictor_config", "predictor_checkpoint"),
-    ("trainer_config",),
+    ("trainer_config", ),
     ("rearrangement_config", "rearrangement_checkpoint"),
-    ("rearrangement_trainer_config",),
-    ("supervised_rearrangement",),
+    ("rearrangement_trainer_config", ),
+    ("supervised_rearrangement", ),
     ("conformal_config", "conformal_checkpoint"),
     (
         "train_batch_size",
@@ -88,7 +109,7 @@ YAML_BLOCKS = (
         "compute_volume",
         "metrics_verbose",
     ),
-    ("wandb",),
+    ("wandb", ),
 )
 
 
@@ -131,23 +152,36 @@ def dataset_config(
     seed: int,
     device: str,
 ) -> dict[str, Any]:
-    return {
-        "type": dataset,
-        "file_path": spec["file_path"],
-        "x_dim": spec["x_dim"],
-        "y_dim": spec["y_dim"],
-        "train_fraction": 0.6,
-        "calibration_fraction": 0.2,
-        "test_fraction": 0.2,
-        "seed": seed,
-        "device": device,
-        "dtype": "float32",
+    config = {
+        "type":
+        dataset,
+        "file_path":
+        spec["file_path"],
+        **({
+            "raw_root": spec["raw_root"]
+        } if "raw_root" in spec else {}),
+        "x_dim":
+        spec["x_dim"],
+        "y_dim":
+        spec["y_dim"],
+        "train_fraction":
+        0.6,
+        "calibration_fraction":
+        0.2,
+        "test_fraction":
+        0.2,
+        "seed":
+        seed,
+        "device":
+        device,
+        "dtype":
+        "float32",
     }
+    return config
 
 
-def random_forest_config(
-    spec: dict[str, Any], seed: int, device: str
-) -> dict[str, Any]:
+def random_forest_config(spec: dict[str, Any], seed: int,
+                         device: str) -> dict[str, Any]:
     return {
         "type": "random_forest",
         "x_dim": spec["x_dim"],
@@ -160,9 +194,8 @@ def random_forest_config(
     }
 
 
-def normalizing_flow_config(
-    spec: dict[str, Any], seed: int, device: str
-) -> dict[str, Any]:
+def normalizing_flow_config(spec: dict[str, Any], seed: int,
+                            device: str) -> dict[str, Any]:
     return {
         "type": "normalizing_flow",
         "x_dim": spec["x_dim"],
@@ -177,9 +210,7 @@ def normalizing_flow_config(
     }
 
 
-def neural_ot_config(
-    spec: dict[str, Any], seed: int, device: str
-) -> dict[str, Any]:
+def neural_ot_config(spec: dict[str, Any], seed: int, device: str) -> dict[str, Any]:
     return {
         "type": "neural_optimal_transport",
         "x_dim": spec["x_dim"],
@@ -195,9 +226,7 @@ def neural_ot_config(
     }
 
 
-def base_trainer_config(
-    predictor_type: str, warmup_iterations: int
-) -> dict[str, Any]:
+def base_trainer_config(predictor_type: str, warmup_iterations: int) -> dict[str, Any]:
     if predictor_type == "random_forest":
         return {"epochs": 1}
 
@@ -222,9 +251,8 @@ def base_trainer_config(
     return config
 
 
-def rearrangement_config(
-    spec: dict[str, Any], seed: int, device: str
-) -> dict[str, Any]:
+def rearrangement_config(spec: dict[str, Any], seed: int,
+                         device: str) -> dict[str, Any]:
     return {
         "type": "amortized_rearranged_transport",
         "x_dim": spec["x_dim"],
@@ -259,7 +287,11 @@ def rearrangement_trainer_config() -> dict[str, Any]:
     }
 
 
-def residual_conformal_config(family: str, seed: int) -> dict[str, Any]:
+def residual_conformal_config(
+    dataset: str,
+    family: str,
+    seed: int,
+) -> dict[str, Any]:
     if family == "residual_rf_elliptic":
         calibrator = {
             "type": "elliptic",
@@ -276,12 +308,18 @@ def residual_conformal_config(family: str, seed: int) -> dict[str, Any]:
             "seed": seed,
         }
     return {
-        "type": "residual",
-        "coverage_mass": 0.9,
-        "calibrator": calibrator,
-        "volume_mc_samples": 1_000,
-        "volume_n_neighbors": 100,
-        "volume_seed": seed,
+        "type":
+        "residual",
+        "coverage_mass":
+        0.9,
+        "calibrator":
+        calibrator,
+        "volume_mc_samples":
+        (OTCP_VOLUME_MC_SAMPLES[dataset] if family.endswith("otcp") else 1_000),
+        "volume_n_neighbors":
+        100,
+        "volume_seed":
+        seed,
     }
 
 
@@ -289,7 +327,10 @@ def transport_conformal_config(seed: int) -> dict[str, Any]:
     return {
         "type": "transport_based",
         "coverage_mass": 0.9,
-        "calibrator": {"type": "norm", "p": 2.0},
+        "calibrator": {
+            "type": "norm",
+            "p": 2.0
+        },
         "volume_mc_samples": 1_000,
         "volume_batch_size": 1_024,
         "volume_seed": seed,
@@ -336,14 +377,18 @@ def make_config(dataset: str, family: str, seed: int) -> dict[str, Any]:
         predictor = normalizing_flow_config(spec, seed, device)
 
     config: dict[str, Any] = {
-        "name": f"seed_{seed:02d}",
-        "seed": seed,
-        "save_directory": f"benchmark/results/{dataset}/base_run/{family}",
-        "dataset_config": dataset_config(dataset, spec, seed, device),
-        "predictor_config": predictor,
-        "trainer_config": base_trainer_config(
-            predictor["type"], NEURAL_OT_WARMUP_ITERATIONS[dataset]
-        ),
+        "name":
+        f"seed_{seed:02d}",
+        "seed":
+        seed,
+        "save_directory":
+        f"benchmark/results/{dataset}/base_run/{family}",
+        "dataset_config":
+        dataset_config(dataset, spec, seed, device),
+        "predictor_config":
+        predictor,
+        "trainer_config":
+        base_trainer_config(predictor["type"], NEURAL_OT_WARMUP_ITERATIONS[dataset]),
     }
 
     if is_rearranged:
@@ -352,30 +397,31 @@ def make_config(dataset: str, family: str, seed: int) -> dict[str, Any]:
             f"benchmark/results/{dataset}/base_run/{base_family}/seed_{seed:02d}"
             "/base/predictor.pt"
         )
-        config["rearrangement_config"] = rearrangement_config(
-            spec, seed, device
-        )
+        config["rearrangement_config"] = rearrangement_config(spec, seed, device)
         config["rearrangement_trainer_config"] = rearrangement_trainer_config()
         config["supervised_rearrangement"] = False
 
     config["conformal_config"] = (
-        residual_conformal_config(family, seed)
-        if is_residual
-        else transport_conformal_config(seed)
+        residual_conformal_config(dataset, family, seed)
+        if is_residual else transport_conformal_config(seed)
     )
     config.update(
         {
-            "train_batch_size": 4_096,
-            **(
-                {"rearrangement_train_batch_size": 512}
-                if is_rearranged
-                else {}
-            ),
-            "calibration_batch_size": 512,
-            "test_batch_size": 512,
-            "compute_volume": True,
-            "metrics_verbose": True,
-            "wandb": wandb_config(dataset, family, seed),
+            "train_batch_size":
+            4_096,
+            **({
+                "rearrangement_train_batch_size": 512
+            } if is_rearranged else {}),
+            "calibration_batch_size":
+            512,
+            "test_batch_size":
+            512,
+            "compute_volume":
+            True,
+            "metrics_verbose":
+            True,
+            "wandb":
+            wandb_config(dataset, family, seed),
         }
     )
     return config
@@ -414,12 +460,17 @@ def make_softplus_rearrangement_config(
 
 
 def main() -> None:
-    for dataset in DATASETS:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset", choices=DATASETS)
+    arguments = parser.parse_args()
+    selected_datasets = (
+        (arguments.dataset, ) if arguments.dataset is not None else tuple(DATASETS)
+    )
+
+    for dataset in selected_datasets:
         for family in FAMILIES:
             suite_name = (
-                "base_run_cpu"
-                if family.startswith("residual_rf")
-                else "base_run_cuda"
+                "base_run_cpu" if family.startswith("residual_rf") else "base_run_cuda"
             )
             suite_directory = CONFIGURATION_ROOT / dataset / suite_name
             family_directory = suite_directory / family
@@ -431,10 +482,9 @@ def main() -> None:
                     encoding="utf-8",
                 )
 
-    for dataset in ("bio", "blog"):
-        suite_directory = (
-            CONFIGURATION_ROOT / dataset / "softplus_rearrangement"
-        )
+    softplus_datasets = set(selected_datasets) & {"bio", "blog"}
+    for dataset in softplus_datasets:
+        suite_directory = (CONFIGURATION_ROOT / dataset / "softplus_rearrangement")
         for family in SOFTPLUS_REARRANGEMENT_FAMILIES:
             family_directory = suite_directory / family
             family_directory.mkdir(parents=True, exist_ok=True)
@@ -442,16 +492,13 @@ def main() -> None:
                 path = family_directory / f"seed_{seed:02d}.yaml"
                 path.write_text(
                     dump_config(
-                        make_softplus_rearrangement_config(
-                            dataset, family, seed
-                        )
+                        make_softplus_rearrangement_config(dataset, family, seed)
                     ),
                     encoding="utf-8",
                 )
 
-    count = (
-        len(DATASETS) * len(FAMILIES) * 5
-        + 2 * len(SOFTPLUS_REARRANGEMENT_FAMILIES) * 5
+    count = len(selected_datasets) * len(FAMILIES) * 5 + (
+        len(softplus_datasets) * len(SOFTPLUS_REARRANGEMENT_FAMILIES) * 5
     )
     print(f"Generated {count} benchmark configurations.")
 

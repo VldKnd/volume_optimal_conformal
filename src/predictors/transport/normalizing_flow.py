@@ -363,9 +363,7 @@ class NormalizingFlowPredictor(nn.Module, BaseTransportPredictor):
         )
         inverse_log_det = inverse_log_det + self._scale_y_log_det()
 
-        base_log_prob = (
-            -0.5 * u.square() - 0.5 * math.log(2.0 * math.pi)
-        ).sum(dim=-1)
+        base_log_prob = (-0.5 * u.square() - 0.5 * math.log(2.0 * math.pi)).sum(dim=-1)
 
         return base_log_prob + inverse_log_det
 
@@ -422,7 +420,9 @@ class NormalizingFlowPredictor(nn.Module, BaseTransportPredictor):
     ) -> Self:
         data = torch.load(path, map_location=map_location, weights_only=False)
 
-        config = NormalizingFlowPredictorConfig.model_validate(data["config"])
+        config_data = dict(data["config"])
+        config_data["device"] = str(torch.device(map_location))
+        config = NormalizingFlowPredictorConfig.model_validate(config_data)
         model = cls(config)
         model.load_state_dict(data["state_dict"])
         model.to(device=model.device, dtype=model.dtype)

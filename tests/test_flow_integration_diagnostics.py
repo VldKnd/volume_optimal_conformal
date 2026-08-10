@@ -31,6 +31,27 @@ class _LinearVectorField(nn.Module):
 
 class FlowIntegrationDiagnosticsTest(unittest.TestCase):
 
+    def test_default_endpoint_is_jittered_during_training(self) -> None:
+        flow = VectorFieldFlow(
+            vector_field=_LinearVectorField(),
+            use_adjoint=False,
+            method="dopri5",
+        ).double()
+        flow.train()
+        input_value = torch.tensor([[1.0, -0.5]], dtype=torch.float64)
+
+        sampled_end_times = []
+        with mock.patch.object(flow, "integrate", return_value=input_value):
+            for _ in range(5):
+                flow(input_value)
+                sampled_end_times.append(flow.last_end_time)
+
+        self.assertEqual(flow.endpoint_alpha, 0.1)
+        self.assertTrue(
+            all(0.9 <= end_time <= 1.1 for end_time in sampled_end_times)
+        )
+        self.assertGreater(len(set(sampled_end_times)), 1)
+
     @staticmethod
     def _make_flow(use_adjoint: bool) -> VectorFieldFlow:
         return VectorFieldFlow(

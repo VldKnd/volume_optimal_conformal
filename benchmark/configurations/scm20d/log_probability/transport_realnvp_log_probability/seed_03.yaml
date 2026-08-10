@@ -50,4 +50,3 @@ calibration_batch_size: 512
 test_batch_size: 512
 compute_volume: true
 metrics_verbose: true
-

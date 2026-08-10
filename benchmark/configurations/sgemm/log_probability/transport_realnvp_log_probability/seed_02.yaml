@@ -50,21 +50,3 @@ calibration_batch_size: 512
 test_batch_size: 512
 compute_volume: true
 metrics_verbose: true
-
-wandb:
-  mode: online
-  project: minimal-volume-conformal-prediction
-  entity: null
-  group: sgemm/transport_realnvp_log_probability
-  name: transport_realnvp_log_probability_seed_02
-  tags:
-    - sgemm
-    - benchmark-comparison
-    - normalizing-flow
-    - realnvp
-    - transport
-    - log-probability
-  job_type: transport_realnvp_log_probability
-  log_every_n_steps: 20
-  log_solver_diagnostics: false
-

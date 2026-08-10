@@ -1,21 +1,42 @@
 from __future__ import annotations
 
-import math
 import unittest
 from unittest import mock
 
 import torch
+import torch.nn as nn
 
 from networks.measure_preserving_flows.explicit_sparse_velocity_field import (
     ExplicitSparseGaussianSkewVectorField,
 )
-from networks.measure_preserving_flows.mlp import ScaledTanh
+from networks.measure_preserving_flows.mlp import (
+    MeasurePreservingMLP,
+    ScaledTanh,
+)
 from networks.measure_preserving_flows.sparse_skew_symmetric_vector_field import (
     SparseGaussianSkewVectorField,
 )
 
 
 class ExplicitSparseVelocityFieldSmokeTest(unittest.TestCase):
+
+    def test_last_hidden_activation_and_layer_count(self) -> None:
+        for num_hidden_layers in (0, 1, 3):
+            with self.subTest(num_hidden_layers=num_hidden_layers):
+                network = MeasurePreservingMLP(
+                    x_dim=3,
+                    y_dim=5,
+                    hidden_dim=7,
+                    num_hidden_layers=num_hidden_layers,
+                    activation="softplus",
+                )
+                linear_layers = [
+                    layer for layer in network.net if isinstance(layer, nn.Linear)
+                ]
+
+                self.assertEqual(len(linear_layers), num_hidden_layers + 2)
+                self.assertIsInstance(network.net[-2], nn.Tanh)
+                self.assertIsInstance(network.net[-1], nn.Linear)
 
     def test_scaled_tanh_is_trainable_and_bounded(self) -> None:
         activation = ScaledTanh(initial_scale=2.5).double()
@@ -51,14 +72,15 @@ class ExplicitSparseVelocityFieldSmokeTest(unittest.TestCase):
         }
         reference = SparseGaussianSkewVectorField(**field_kwargs).double()
         explicit = ExplicitSparseGaussianSkewVectorField(**field_kwargs).double()
-        self.assertIsInstance(reference.network.net[-1], ScaledTanh)
-        self.assertIsInstance(explicit.network.net[-1], ScaledTanh)
+        self.assertIsInstance(reference.network.net[-2], nn.Tanh)
+        self.assertIsInstance(reference.network.net[-1], nn.Linear)
+        self.assertIsInstance(explicit.network.net[-2], nn.Tanh)
+        self.assertIsInstance(explicit.network.net[-1], nn.Linear)
 
         generator = torch.Generator().manual_seed(731)
         with torch.no_grad():
             for parameter in reference.parameters():
                 parameter.normal_(mean=0.0, std=0.2, generator=generator)
-            reference.network.net[-1].alpha.fill_(math.log(1.7))
 
         self.assertEqual(
             list(reference.state_dict()),
