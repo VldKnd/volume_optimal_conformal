@@ -2,12 +2,16 @@ from configs.calibrators import (
     CalibratorConfig,
     EllipticCalibratorConfig,
     GlobalOTCPCalibratorConfig,
+    LogProbabilityCalibratorConfig,
     LocalOTCPCalibratorConfig,
     NoCalibratorConfig,
     NormCalibratorConfig,
 )
 from conformal.calibrators.base import BaseCalibrator
 from conformal.calibrators.elliptic_calibrator import EllipticCalibrator
+from conformal.calibrators.log_probability_calibrator import (
+    LogProbabilityCalibrator,
+)
 from conformal.calibrators.no_calibrator import NoCalibrator
 from conformal.calibrators.norm_calibrator import NormCalibrator
 from conformal.calibrators.optimal_transport_calibrator import (
@@ -27,6 +31,9 @@ def make_calibrator(config: CalibratorConfig) -> BaseCalibrator:
     if isinstance(config, GlobalOTCPCalibratorConfig):
         return GlobalOTCPCalibrator(config)
 
+    if isinstance(config, LogProbabilityCalibratorConfig):
+        return LogProbabilityCalibrator(config)
+
     if isinstance(config, LocalOTCPCalibratorConfig):
         return LocalOTCPCalibrator(config)
 
@@ -37,7 +44,8 @@ def make_calibrator(config: CalibratorConfig) -> BaseCalibrator:
         "Unsupported calibrator config type "
         f"{type(config).__name__}. Expected NormCalibratorConfig, "
         "EllipticCalibratorConfig, GlobalOTCPCalibratorConfig, "
-        "LocalOTCPCalibratorConfig, or NoCalibratorConfig."
+        "LogProbabilityCalibratorConfig, LocalOTCPCalibratorConfig, or "
+        "NoCalibratorConfig."
     )
 
 

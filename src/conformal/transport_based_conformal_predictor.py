@@ -5,12 +5,19 @@ from collections.abc import Mapping
 from typing import Any, Self
 
 import torch
+from sklearn.neighbors import NearestNeighbors
 from torch.utils.data import DataLoader
 
+from configs.calibrators.log_probability_calibrator import (
+    LogProbabilityCalibratorConfig,
+)
 from configs.conformal import TransportBasedConformalPredictorConfig
 from conformal.base import ConformalPredictor
 from conformal.calibrators.base import BaseCalibrator
 from conformal.calibrators.factory import make_calibrator
+from conformal.calibrators.log_probability_calibrator import (
+    LogProbabilityCalibrator,
+)
 from conformal.calibrators.no_calibrator import NoCalibrator
 from conformal.calibrators.norm_calibrator import NormCalibrator
 from predictors.rearranged_transport.amortized_rearranged_transport import (
@@ -34,6 +41,15 @@ class TransportBasedConformalPredictor(ConformalPredictor):
         if not isinstance(config, TransportBasedConformalPredictorConfig):
             config = TransportBasedConformalPredictorConfig.model_validate(config)
 
+        if (
+            isinstance(config.calibrator, LogProbabilityCalibratorConfig)
+            and not callable(getattr(predictor, "log_prob", None))
+        ):
+            raise TypeError(
+                "The log-probability calibrator requires the base predictor "
+                "to implement a callable log_prob(x, y) method."
+            )
+
         self._validate_predictor(predictor)
 
         self.predictor = predictor
@@ -49,6 +65,9 @@ class TransportBasedConformalPredictor(ConformalPredictor):
 
         self.calibrator = make_calibrator(config.calibrator)
         self._coverage_conditioned = self._is_coverage_conditioned(predictor)
+        self.calibration_x: torch.Tensor | None = None
+        self.calibration_y: torch.Tensor | None = None
+        self.volume_neighbors: NearestNeighbors | None = None
 
         if isinstance(self.calibrator, NoCalibrator):
             self._initialize_analytic_calibrator()
@@ -59,10 +78,11 @@ class TransportBasedConformalPredictor(ConformalPredictor):
     ) -> Self:
         """Fit the calibrator from batched ``(x, y)`` observations.
 
-        Pullbacks are evaluated one dataloader batch at a time on the
-        predictor device. Detached covariates and scores are accumulated on
-        CPU, so calibration does not require the full dataset to fit in the
-        accelerator memory.
+        Predictor scores are evaluated one dataloader batch at a time on the
+        predictor device. The log-probability calibrator uses conditional log
+        densities; all other calibrators use latent pullbacks. Detached
+        covariates and scores are accumulated on CPU, so calibration does not
+        require the full dataset to fit in accelerator memory.
         """
         if dataloader is None:
             raise ValueError("dataloader must be provided for calibration.")
@@ -71,6 +91,7 @@ class TransportBasedConformalPredictor(ConformalPredictor):
             return self
 
         calibration_x: list[torch.Tensor] = []
+        calibration_y: list[torch.Tensor] = []
         calibration_scores: list[torch.Tensor] = []
         cpu_dtype = self._calibration_cpu_dtype()
 
@@ -86,12 +107,18 @@ class TransportBasedConformalPredictor(ConformalPredictor):
                 continue
 
             with torch.no_grad():
-                scores = self._call_predictor(
-                    method_name="pullback",
-                    x=x_batch,
-                    point=y_batch,
-                    point_name="y",
-                )
+                if isinstance(self.calibrator, LogProbabilityCalibrator):
+                    scores = self._log_probability_scores(
+                        x=x_batch,
+                        y=y_batch,
+                    )
+                else:
+                    scores = self._call_predictor(
+                        method_name="pullback",
+                        x=x_batch,
+                        point=y_batch,
+                        point_name="y",
+                    )
 
             self._validate_calibration_scores(
                 scores=scores,
@@ -107,17 +134,35 @@ class TransportBasedConformalPredictor(ConformalPredictor):
                     dtype=cpu_dtype,
                 )
             )
+            if isinstance(self.calibrator, LogProbabilityCalibrator):
+                calibration_y.append(
+                    y_batch.detach().to(
+                        device="cpu",
+                        dtype=cpu_dtype,
+                    )
+                )
 
         if not calibration_scores:
             raise ValueError(
                 "Calibration dataloader must contain at least one observation."
             )
 
+        fitted_x = torch.cat(calibration_x, dim=0)
         self.calibrator.fit(
-            x=torch.cat(calibration_x, dim=0),
+            x=fitted_x,
             scores=torch.cat(calibration_scores, dim=0),
             coverage_mass=self.coverage_mass,
         )
+
+        if isinstance(self.calibrator, LogProbabilityCalibrator):
+            self.calibration_x = fitted_x
+            self.calibration_y = torch.cat(calibration_y, dim=0)
+            if self.x_dim > 0:
+                self.volume_neighbors = NearestNeighbors(
+                    n_neighbors=self.config.volume_n_neighbors,
+                )
+                self.volume_neighbors.fit(fitted_x.numpy())
+
         return self
 
     def pushforward(
@@ -153,7 +198,22 @@ class TransportBasedConformalPredictor(ConformalPredictor):
         x: torch.Tensor,
         y: torch.Tensor,
     ) -> torch.Tensor:
+        if isinstance(self.calibrator, LogProbabilityCalibrator):
+            return self.log_prob(x=x, y=y).unsqueeze(-1)
+
         return self.pullback(x=x, y=y)
+
+    def log_prob(
+        self,
+        x: torch.Tensor,
+        y: torch.Tensor,
+    ) -> torch.Tensor:
+        """Return the wrapped model's conditional ``log p(y | x)``."""
+        if not callable(getattr(self.predictor, "log_prob", None)):
+            raise RuntimeError("The base predictor does not implement log_prob(x, y).")
+
+        x, y = self._prepare_inputs(x=x, point=y, point_name="y")
+        return self._log_probability_scores(x=x, y=y)[:, 0]
 
     def log_det(
         self,
@@ -178,19 +238,30 @@ class TransportBasedConformalPredictor(ConformalPredictor):
     ) -> torch.Tensor:
         """Estimate one log-volume per covariate by Monte Carlo integration.
 
-        For a latent Euclidean ball ``B_r`` this estimates
+        For latent Euclidean-ball regions ``B_r`` this estimates
 
         ``log Vol(B_r) + log E[exp(log |det D T_x(U)|)]``
 
-        for ``U`` uniform in ``B_r``.
+        for ``U`` uniform in ``B_r``. For a log-probability level set, it uses
+        the same local bounding-box rejection estimator as OT-CP regions.
 
-        ``batch_size`` bounds the number of flattened ``(x, u)`` pairs passed
-        to the predictor in any one call.
+        ``batch_size`` bounds the number of flattened covariate/point pairs
+        passed to the predictor in any one call.
         """
-        radius = self._euclidean_ball_radius()
+        self._require_calibrated()
         x = self._prepare_x(x)
         if x.shape[0] == 0:
             return x.new_empty(0)
+
+        if isinstance(self.calibrator, LogProbabilityCalibrator):
+            return self._estimate_log_probability_log_volume(
+                x=x,
+                number_of_samples=number_of_samples,
+                batch_size=batch_size,
+                seed=seed,
+            )
+
+        radius = self._euclidean_ball_radius()
 
         number_of_samples = self._positive_integer(
             self.config.volume_mc_samples
@@ -294,6 +365,146 @@ class TransportBasedConformalPredictor(ConformalPredictor):
             math.lgamma(0.5 * self.y_dim + 1.0)
         )
         return (log_ball_volume + log_integral - math.log(number_of_samples))
+
+    def _estimate_log_probability_log_volume(
+        self,
+        x: torch.Tensor,
+        number_of_samples: int | None,
+        batch_size: int | None,
+        seed: int | None,
+    ) -> torch.Tensor:
+        """Estimate density-level-set volume in a local calibration box.
+
+        This is the same rejection Monte Carlo construction used for OT-CP
+        residual regions: nearby calibration observations define a bounding
+        box, samples are drawn uniformly from it, and the box volume is
+        multiplied by the fraction accepted by the calibrator.
+        """
+        if self.calibration_x is None or self.calibration_y is None:
+            raise RuntimeError(
+                "Calibration observations are unavailable for log-probability "
+                "volume estimation."
+            )
+
+        n_neighbors = self.config.volume_n_neighbors
+        if n_neighbors > self.calibration_y.shape[0]:
+            raise ValueError(
+                "volume_n_neighbors cannot exceed the number of calibration "
+                f"observations ({self.calibration_y.shape[0]})."
+            )
+
+        number_of_samples = self._positive_integer(
+            self.config.volume_mc_samples
+            if number_of_samples is None else number_of_samples,
+            name="number_of_samples",
+        )
+        batch_size = self._positive_integer(
+            self.config.volume_batch_size if batch_size is None else batch_size,
+            name="batch_size",
+        )
+        seed = self.config.volume_seed if seed is None else seed
+        if isinstance(seed, bool) or not isinstance(seed, int):
+            raise ValueError("seed must be an integer.")
+
+        generator = torch.Generator(device="cpu")
+        generator.manual_seed(seed)
+        uniform_samples = torch.rand(
+            number_of_samples,
+            self.y_dim,
+            dtype=self.calibration_y.dtype,
+            generator=generator,
+        )
+        query_x = x.detach().to(
+            device="cpu",
+            dtype=self.calibration_x.dtype,
+        )
+
+        if self.x_dim == 0:
+            neighbor_indices = torch.arange(n_neighbors).expand(
+                query_x.shape[0],
+                n_neighbors,
+            )
+        else:
+            if self.volume_neighbors is None:
+                self.volume_neighbors = NearestNeighbors(n_neighbors=n_neighbors)
+                self.volume_neighbors.fit(self.calibration_x.numpy())
+            neighbor_indices = self.volume_neighbors.kneighbors(
+                query_x.numpy(),
+                return_distance=False,
+            )
+
+        log_volumes: list[torch.Tensor] = []
+        with torch.no_grad():
+            for query_index, indices in enumerate(neighbor_indices):
+                index = torch.as_tensor(indices, dtype=torch.long)
+                local_y = self.calibration_y.index_select(0, index)
+                y_min = local_y.amin(dim=0)
+                y_max = local_y.amax(dim=0)
+                widths = y_max - y_min
+
+                if torch.any(widths == 0):
+                    log_volumes.append(widths.new_tensor(-torch.inf))
+                    continue
+
+                accepted = 0
+                for sample_start in range(0, number_of_samples, batch_size):
+                    sample_end = min(
+                        number_of_samples,
+                        sample_start + batch_size,
+                    )
+                    y_samples = y_min + widths * uniform_samples[sample_start:sample_end]
+                    repeated_x = x[query_index:query_index + 1].expand(
+                        sample_end - sample_start,
+                        self.x_dim,
+                    )
+                    scores = self.multivariate_score(
+                        x=repeated_x,
+                        y=y_samples.to(device=self.device, dtype=self.dtype),
+                    )
+                    inside = self.calibrator.contains(
+                        x=repeated_x,
+                        scores=scores,
+                    )
+                    accepted += int(inside.sum().item())
+
+                inside_probability = widths.new_tensor(accepted / number_of_samples)
+                log_volumes.append(
+                    torch.log(widths).sum() + torch.log(inside_probability)
+                )
+
+        return torch.stack(log_volumes).to(
+            device=x.device,
+            dtype=x.dtype,
+        )
+
+    def _log_probability_scores(
+        self,
+        x: torch.Tensor,
+        y: torch.Tensor,
+    ) -> torch.Tensor:
+        log_probabilities = self._call_predictor(
+            method_name="log_prob",
+            x=x,
+            point=y,
+            point_name="y",
+        )
+        if not isinstance(log_probabilities, torch.Tensor):
+            raise TypeError(
+                "predictor.log_prob must return a torch.Tensor, got "
+                f"{type(log_probabilities).__name__}."
+            )
+
+        if tuple(log_probabilities.shape) == (x.shape[0], 1):
+            return log_probabilities
+
+        if tuple(log_probabilities.shape) == (x.shape[0], ):
+            return log_probabilities.unsqueeze(-1)
+
+        raise ValueError(
+            "predictor.log_prob must return one value per observation with "
+            f"shape ({x.shape[0]},) or ({x.shape[0]}, 1), got "
+            f"{tuple(log_probabilities.shape)}."
+        )
 
     def _initialize_analytic_calibrator(self) -> None:
         x = torch.empty(
@@ -464,10 +675,13 @@ class TransportBasedConformalPredictor(ConformalPredictor):
                 f"{type(scores).__name__}."
             )
 
-        expected_shape = (batch_size, self.y_dim)
+        score_dimension = (
+            1 if isinstance(self.calibrator, LogProbabilityCalibrator) else self.y_dim
+        )
+        expected_shape = (batch_size, score_dimension)
         if tuple(scores.shape) != expected_shape:
             raise ValueError(
-                "predictor.pullback must return scores with shape "
+                "The predictor must return calibration scores with shape "
                 f"{expected_shape}, got {tuple(scores.shape)}."
             )
 

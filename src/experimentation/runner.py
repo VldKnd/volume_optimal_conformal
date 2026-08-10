@@ -401,6 +401,12 @@ class ExperimentRunner:
                     "calibration_residuals"]
                 self.conformal_predictor.volume_neighbors = checkpoint[
                     "volume_neighbors"]
+            else:
+                self.conformal_predictor.calibration_x = checkpoint.get("calibration_x")
+                self.conformal_predictor.calibration_y = checkpoint.get("calibration_y")
+                self.conformal_predictor.volume_neighbors = checkpoint.get(
+                    "volume_neighbors"
+                )
 
         conformal_directory = self.run_directory / "conformal"
         conformal_directory.mkdir(exist_ok=True)
@@ -412,6 +418,12 @@ class ExperimentRunner:
             conformal_checkpoint.update(
                 calibration_x=self.conformal_predictor.calibration_x,
                 calibration_residuals=(self.conformal_predictor.calibration_residuals),
+                volume_neighbors=self.conformal_predictor.volume_neighbors,
+            )
+        elif self.conformal_predictor.calibration_y is not None:
+            conformal_checkpoint.update(
+                calibration_x=self.conformal_predictor.calibration_x,
+                calibration_y=self.conformal_predictor.calibration_y,
                 volume_neighbors=self.conformal_predictor.volume_neighbors,
             )
         torch.save(

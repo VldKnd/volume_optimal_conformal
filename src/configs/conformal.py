@@ -44,8 +44,16 @@ class TransportBasedConformalPredictorConfig(BaseModel):
         default=1_024,
         gt=0,
         description=(
-            "Maximum number of flattened covariate/latent pairs passed to "
-            "predictor.log_det in one call."
+            "Maximum number of flattened covariate/point pairs passed to the "
+            "predictor in one volume-estimation call."
+        ),
+    )
+    volume_n_neighbors: int = Field(
+        default=100,
+        gt=1,
+        description=(
+            "Number of nearby calibration observations used to form the "
+            "Monte Carlo bounding box for non-Euclidean regions."
         ),
     )
     volume_seed: int = 0

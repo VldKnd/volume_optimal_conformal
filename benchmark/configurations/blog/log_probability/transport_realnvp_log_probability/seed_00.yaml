@@ -1,0 +1,70 @@
+name: seed_00
+seed: 0
+save_directory: benchmark/results/blog/log_probability/transport_realnvp_log_probability
+
+dataset_config:
+  type: blog
+  file_path: data/blog/blogData_train.csv
+  x_dim: 279
+  y_dim: 2
+  train_fraction: 0.6
+  calibration_fraction: 0.2
+  test_fraction: 0.2
+  seed: 0
+  device: cuda
+  dtype: float32
+
+predictor_config:
+  type: normalizing_flow
+  x_dim: 279
+  y_dim: 2
+  hidden_dim: 8
+  num_hidden_layers: 4
+  num_flow_layers: 2
+  log_scale_bound: 3.0
+  seed: 0
+  device: cuda
+  dtype: float32
+predictor_checkpoint: benchmark/downloads/results/blog/base_run/transport_realnvp_l2/seed_00/base/predictor.pt
+
+trainer_config:
+  epochs: 250
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  grad_clip_norm: 1.0
+  use_cosine_scheduler: true
+  verbose: true
+
+conformal_config:
+  type: transport_based
+  coverage_mass: 0.9
+  calibrator:
+    type: log_probability
+  volume_mc_samples: 1000
+  volume_batch_size: 1024
+  volume_n_neighbors: 100
+  volume_seed: 0
+
+train_batch_size: 4096
+calibration_batch_size: 512
+test_batch_size: 512
+compute_volume: true
+metrics_verbose: true
+
+wandb:
+  mode: online
+  project: minimal-volume-conformal-prediction
+  entity: null
+  group: blog/transport_realnvp_log_probability
+  name: transport_realnvp_log_probability_seed_00
+  tags:
+    - blog
+    - benchmark-comparison
+    - normalizing-flow
+    - realnvp
+    - transport
+    - log-probability
+  job_type: transport_realnvp_log_probability
+  log_every_n_steps: 20
+  log_solver_diagnostics: false
+
