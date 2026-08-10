@@ -1,28 +1,28 @@
-# src/datasets/synthetic/student_t_dataset.py
+"""Unconditional multivariate Student-t synthetic dataset."""
 
-from typing import Literal
+import math
 
 import torch
-from pydantic import BaseModel, Field
-from torch.distributions import StudentT
 
-from data.datasets.base import XYData, DatasetSplits
-from data.datasets.synthetic.base import BaseSyntheticDataset
 from configs.datasets.synthetic.student_t_dataset import StudentTDatasetConfig
+from data.datasets.base import DatasetSplits, XYData
+from data.datasets.synthetic.base import BaseSyntheticDataset
+
 
 class StudentTDataset(BaseSyntheticDataset):
-    """
-    Conditional non-Gaussian student t dataset.
+    """Centered elliptical Student-t distribution with a dummy condition.
 
-        X ~ N(0, I)
-        Y | X=x = f(x) + Sigma^{1/2} Z
+    Every condition is the one-dimensional zero vector. For target dimension
+    ``d``, the Student-t scale matrix is diagonal with entries
 
-    where Z has independent Student-t coordinates and Sigma is diagonal
-    positive definite with different diagonal entries.
+    ``(k ** (1 - 1/d), k ** (1/d), ..., k ** (1/d))``.
 
-    Strictly speaking, independent-coordinate Student-t is not the canonical
-    multivariate Student-t law. If you want a genuinely elliptic
-    Student-t distribution, use sample_radial_conditional() below instead.
+    Samples use the canonical multivariate Student-t construction
+
+    ``Y = scale_matrix ** (1/2) @ Z / sqrt(G / nu)``,
+
+    where ``Z ~ N(0, I_d)`` and the scalar ``G ~ ChiSquare(nu)`` is shared by
+    all coordinates of an observation.
     """
 
     def __init__(self, config: StudentTDatasetConfig):
@@ -31,37 +31,19 @@ class StudentTDataset(BaseSyntheticDataset):
 
         self.device = torch.device(config.device)
         self.dtype = getattr(torch, config.dtype)
-
-        if config.max_scale <= config.min_scale:
-            raise ValueError("max_scale must be larger than min_scale.")
-
         self._generator = torch.Generator(device="cpu")
         self._generator.manual_seed(config.seed)
 
-        self.weight = torch.randn(
-            config.x_dim,
-            config.y_dim,
-            generator=self._generator,
-            dtype=self.dtype,
-        ) / config.x_dim**0.5
-
-        self.bias = 0.2 * torch.randn(
-            config.y_dim,
-            generator=self._generator,
+        repeated_entry = config.k**(1.0 / config.y_dim)
+        first_entry = config.k**(1.0 - 1.0 / config.y_dim)
+        scale_diagonal = torch.full(
+            (config.y_dim, ),
+            repeated_entry,
             dtype=self.dtype,
         )
-
-        # Positive, all-different diagonal scales.
-        self.scales = torch.linspace(
-            config.min_scale,
-            config.max_scale,
-            config.y_dim,
-            dtype=self.dtype,
-        )
-
-        self.weight = self.weight.to(self.device)
-        self.bias = self.bias.to(self.device)
-        self.scales = self.scales.to(self.device)
+        scale_diagonal[0] = first_entry
+        self._scale_diagonal = scale_diagonal.to(self.device)
+        self._coordinate_scales = torch.sqrt(self._scale_diagonal)
 
     @property
     def x_dim(self) -> int:
@@ -73,136 +55,154 @@ class StudentTDataset(BaseSyntheticDataset):
 
     @property
     def n_total(self) -> int:
-        return (
-            self.config.n_train
-            + self.config.n_calibration
-            + self.config.n_test
-        )
+        return self.config.n_train + self.config.n_calibration + self.config.n_test
+
+    @property
+    def scale_matrix(self) -> torch.Tensor:
+        """Return the diagonal scale matrix parameterizing the Student-t law."""
+        return torch.diag(self._scale_diagonal)
+
+    @property
+    def correlation_matrix(self) -> torch.Tensor:
+        """Return the requested diagonal matrix.
+
+        This name mirrors the dataset specification. Mathematically, a matrix
+        with non-unit diagonal is a scale matrix rather than a correlation
+        matrix.
+        """
+        return self.scale_matrix
 
     @property
     def covariance(self) -> torch.Tensor:
-        """
-        Diagonal PSD covariance-like matrix.
-
-        Shape:
-            (y_dim, y_dim)
-        """
-        return torch.diag(self.scales.square())
+        """Return the finite covariance, which exists only when ``nu > 2``."""
+        if self.config.nu <= 2.0:
+            raise RuntimeError("The Student-t covariance is undefined when nu <= 2.")
+        return self.config.nu / (self.config.nu - 2.0) * self.scale_matrix
 
     @property
     def supports_density(self) -> bool:
         return True
 
     def mean(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Nonlinear conditional center f(x).
-
-        Args:
-            x: (batch, x_dim)
-
-        Returns:
-            mean: (batch, y_dim)
-        """
-        linear = x @ self.weight + self.bias
-        radial = x.square().mean(dim=-1, keepdim=True)
-
-        nonlinear = (
-            0.5 * torch.sin(linear)
-            + 0.25 * torch.cos(radial)
-        )
-
-        return linear + nonlinear
-
-    def sample_x(self, n: int) -> torch.Tensor:
-        x = torch.randn(
-            n,
-            self.config.x_dim,
-            generator=self._generator,
+        """Return the zero center; the distribution is independent of ``x``."""
+        x = x.to(device=self.device, dtype=self.dtype)
+        self._validate_x(x)
+        return torch.zeros(
+            x.shape[0],
+            self.y_dim,
+            device=self.device,
             dtype=self.dtype,
         )
-        return x.to(self.device)
+
+    def sample_x(self, n: int) -> torch.Tensor:
+        if isinstance(n, bool) or not isinstance(n, int) or n < 0:
+            raise ValueError("n must be a non-negative integer.")
+        return torch.zeros(
+            n,
+            self.x_dim,
+            device=self.device,
+            dtype=self.dtype,
+        )
+
+    def sample_target(self, n: int) -> torch.Tensor:
+        x = self.sample_x(n)
+        return self.sample_conditional(x=x, n_samples=1).squeeze(1)
 
     def sample_conditional(
         self,
         x: torch.Tensor,
         n_samples: int = 1,
     ) -> torch.Tensor:
-        """
-        Sample from Y | X=x.
+        """Sample from the same multivariate Student-t law for every ``x``."""
+        if (
+            isinstance(n_samples, bool) or not isinstance(n_samples, int)
+            or n_samples < 1
+        ):
+            raise ValueError("n_samples must be a positive integer.")
 
-        Args:
-            x: (batch, x_dim)
-            n_samples: number of samples per x
-
-        Returns:
-            y: (batch, n_samples, y_dim)
-        """
         x = x.to(device=self.device, dtype=self.dtype)
-
+        self._validate_x(x)
         batch_size = x.shape[0]
-        mean = self.mean(x)
 
-        dist = StudentT(df=self.config.df)
-
-        eps = dist.sample(
-            sample_shape=(batch_size, n_samples, self.config.y_dim)
-        ).to(device=self.device, dtype=self.dtype)
-
-        return mean[:, None, :] + self.scales[None, None, :] * eps
+        gaussian = torch.randn(
+            batch_size,
+            n_samples,
+            self.y_dim,
+            generator=self._generator,
+            dtype=self.dtype,
+        )
+        gamma_concentration = torch.full(
+            (batch_size, n_samples, 1),
+            self.config.nu / 2.0,
+            dtype=self.dtype,
+        )
+        chi_square = 2.0 * torch._standard_gamma(
+            gamma_concentration,
+            generator=self._generator,
+        )
+        radial_scale = torch.rsqrt(chi_square / self.config.nu)
+        samples = gaussian * radial_scale * self._coordinate_scales.cpu()
+        return samples.to(self.device)
 
     def log_prob(
         self,
         x: torch.Tensor,
         y: torch.Tensor,
     ) -> torch.Tensor:
-        """
-        Coordinate-wise Student-t log-density.
-
-        Args:
-            x: (batch, x_dim)
-            y: (batch, y_dim)
-
-        Returns:
-            log_prob: (batch,)
-        """
+        """Return the exact multivariate Student-t log-density."""
         x = x.to(device=self.device, dtype=self.dtype)
         y = y.to(device=self.device, dtype=self.dtype)
+        self._validate_xy(x=x, y=y)
 
-        mean = self.mean(x)
-        z = (y - mean) / self.scales
-
-        dist = StudentT(df=self.config.df)
-
-        log_base = dist.log_prob(z).sum(dim=-1)
-        log_det = torch.log(self.scales).sum()
-
-        return log_base - log_det
+        dimension = self.y_dim
+        nu = self.config.nu
+        quadratic = (y.square() / self._scale_diagonal).sum(dim=-1)
+        log_scale_determinant = torch.log(self._scale_diagonal).sum()
+        log_normalizer = (
+            math.lgamma((nu + dimension) / 2.0) - math.lgamma(nu / 2.0) -
+            0.5 * dimension * math.log(nu * math.pi) - 0.5 * log_scale_determinant
+        )
+        return log_normalizer - 0.5 * (nu + dimension) * torch.log1p(quadratic / nu)
 
     def prepare(self) -> None:
         x, y = self.sample_joint(self.n_total)
-
         n_train = self.config.n_train
-        n_cal = self.config.n_calibration
-        n_test = self.config.n_test
+        n_calibration = self.config.n_calibration
 
         self._splits = DatasetSplits(
-            train=XYData(
-                x=x[:n_train],
-                y=y[:n_train],
-            ),
+            train=XYData(x=x[:n_train], y=y[:n_train]),
             calibration=XYData(
-                x=x[n_train:n_train + n_cal],
-                y=y[n_train:n_train + n_cal],
+                x=x[n_train:n_train + n_calibration],
+                y=y[n_train:n_train + n_calibration],
             ),
             test=XYData(
-                x=x[n_train + n_cal:n_train + n_cal + n_test],
-                y=y[n_train + n_cal:n_train + n_cal + n_test],
+                x=x[n_train + n_calibration:],
+                y=y[n_train + n_calibration:],
             ),
         )
 
     def get_splits(self) -> DatasetSplits:
         if self._splits is None:
             self.prepare()
-
         assert self._splits is not None
         return self._splits
+
+    def _validate_x(self, x: torch.Tensor) -> None:
+        if x.ndim != 2 or x.shape[1] != self.x_dim:
+            raise ValueError(
+                f"Expected x with shape (batch, {self.x_dim}), "
+                f"got {tuple(x.shape)}."
+            )
+
+    def _validate_xy(self, x: torch.Tensor, y: torch.Tensor) -> None:
+        self._validate_x(x)
+        if y.ndim != 2 or y.shape[1] != self.y_dim:
+            raise ValueError(
+                f"Expected y with shape (batch, {self.y_dim}), "
+                f"got {tuple(y.shape)}."
+            )
+        if x.shape[0] != y.shape[0]:
+            raise ValueError(
+                "x and y must have matching batch sizes, got "
+                f"{x.shape[0]} and {y.shape[0]}."
+            )

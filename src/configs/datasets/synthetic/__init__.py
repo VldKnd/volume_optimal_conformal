@@ -4,6 +4,9 @@ from configs.datasets.synthetic.gaussian_dataset import GaussianDatasetConfig
 from configs.datasets.synthetic.sinusoidal_transport import (
     SinusoidalTransportDatasetConfig,
 )
+from configs.datasets.synthetic.star_shaped_gaussian import (
+    StarShapedGaussianDatasetConfig,
+)
 from configs.datasets.synthetic.student_t_dataset import StudentTDatasetConfig
 
 __all__ = [
@@ -11,5 +14,6 @@ __all__ = [
     "BimodalGaussianDatasetConfig",
     "GaussianDatasetConfig",
     "SinusoidalTransportDatasetConfig",
+    "StarShapedGaussianDatasetConfig",
     "StudentTDatasetConfig",
 ]

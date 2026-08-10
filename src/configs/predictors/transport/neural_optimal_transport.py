@@ -16,8 +16,8 @@ class NeuralOptimalTransportPredictorConfig(BaseModel):
 
     potential_type: Literal["u", "y"] = "u"
 
-    c_transform_lr: float = 0.25
-    c_transform_max_iter: int = 100
+    c_transform_lr: float = 1.
+    c_transform_max_iter: int = 1000
 
     seed: int = 0
     device: str = "cpu"

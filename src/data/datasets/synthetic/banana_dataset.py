@@ -8,18 +8,21 @@ from configs.datasets.synthetic.banana_dataset import BananaDatasetConfig
 
 
 class BananaDataset(BaseSyntheticDataset):
-    """
-    Synthetic banana-shaped conditional dataset.
+    """Synthetic banana-shaped distribution with a fixed dummy condition.
 
-        X ~ Uniform([x_low, x_high])
+        X = 2
 
         U ~ N(0, I_2)
 
-        Y_1 = U_1 X
-        Y_2 = U_2 / X + U_1^2 + X^3
+        Y_1 = 2 U_1
+        Y_2 = U_2 / 2 + U_1^2 + 8
 
-    Hence Y | X=x is non-Gaussian and banana-shaped.
+    The one-dimensional ``x`` tensor is retained for compatibility with the
+    conditional modeling pipeline, but the target distribution is independent
+    of the supplied condition values.
     """
+
+    CONDITION_VALUE = 2.0
 
     def __init__(self, config: BananaDatasetConfig):
         self.config = config
@@ -31,15 +34,6 @@ class BananaDataset(BaseSyntheticDataset):
         self._generator = torch.Generator(device="cpu")
         self._generator.manual_seed(config.seed)
 
-        if config.x_dim != 1:
-            raise ValueError("BananaDataset requires x_dim = 1.")
-
-        if config.y_dim != 2:
-            raise ValueError("BananaDataset requires y_dim = 2.")
-
-        if config.x_high <= config.x_low:
-            raise ValueError("x_high must be larger than x_low.")
-
     @property
     def x_dim(self) -> int:
         return self.config.x_dim
@@ -50,37 +44,28 @@ class BananaDataset(BaseSyntheticDataset):
 
     @property
     def n_total(self) -> int:
-        return (
-            self.config.n_train
-            + self.config.n_calibration
-            + self.config.n_test
-        )
+        return (self.config.n_train + self.config.n_calibration + self.config.n_test)
 
     @property
     def supports_density(self) -> bool:
         return True
 
     def sample_x(self, n: int) -> torch.Tensor:
-        x = (
-            self.config.x_low
-            + (self.config.x_high - self.config.x_low)
-            * torch.rand(
-                n,
-                1,
-                generator=self._generator,
-                dtype=self.dtype,
-            )
+        if isinstance(n, bool) or not isinstance(n, int) or n < 0:
+            raise ValueError("n must be a non-negative integer.")
+        return torch.full(
+            (n, self.x_dim),
+            self.CONDITION_VALUE,
+            device=self.device,
+            dtype=self.dtype,
         )
-
-        return x.to(self.device)
 
     def sample_conditional(
         self,
         x: torch.Tensor,
         n_samples: int = 1,
     ) -> torch.Tensor:
-        """
-        Sample Y | X=x.
+        """Sample from the same banana distribution for every ``x``.
 
         Args:
             x: (batch, 1)
@@ -89,29 +74,27 @@ class BananaDataset(BaseSyntheticDataset):
         Returns:
             y: (batch, n_samples, 2)
         """
-        x = x.to(device=self.device, dtype=self.dtype)
+        if (
+            isinstance(n_samples, bool) or not isinstance(n_samples, int)
+            or n_samples < 1
+        ):
+            raise ValueError("n_samples must be a positive integer.")
 
-        if x.shape[-1] != 1:
-            raise ValueError(f"Expected x.shape[-1] = 1, got {x.shape[-1]}.")
-
+        x = self._fixed_condition(x, require_batch_matrix=True)
         batch_size = x.shape[0]
 
         u = torch.randn(
             batch_size,
             n_samples,
             2,
-            device=self.device,
+            generator=self._generator,
             dtype=self.dtype,
-        )
+        ).to(self.device)
 
         x_expanded = x[:, None, :]  # (batch, 1, 1)
 
         y1 = u[..., 0:1] * x_expanded
-        y2 = (
-            u[..., 1:2] / x_expanded
-            + u[..., 0:1].square()
-            + x_expanded.pow(3)
-        )
+        y2 = (u[..., 1:2] / x_expanded + u[..., 0:1].square() + x_expanded.pow(3))
 
         return torch.cat([y1, y2], dim=-1)
 
@@ -135,7 +118,7 @@ class BananaDataset(BaseSyntheticDataset):
         Returns:
             u: (batch, 2)
         """
-        x = x.to(device=self.device, dtype=self.dtype)
+        x = self._fixed_condition(x)
         y = y.to(device=self.device, dtype=self.dtype)
 
         if y.shape[:-1] != x.shape[:-1]:
@@ -147,22 +130,15 @@ class BananaDataset(BaseSyntheticDataset):
         if y.shape[-1] != 2:
             raise ValueError(f"Expected y.shape[-1] = 2, got {y.shape[-1]}.")
 
-        if x.shape[-1] != 1:
-            raise ValueError(f"Expected x.shape[-1] = 1, got {x.shape[-1]}.")
-
         y_flat = y.reshape(-1, 2)
         x_flat = x.reshape(-1, 1)
 
         u1 = y_flat[:, 0:1] / x_flat
-        u2 = (
-            y_flat[:, 1:2]
-            - u1.square()
-            - x_flat.pow(3)
-        ) * x_flat
+        u2 = (y_flat[:, 1:2] - u1.square() - x_flat.pow(3)) * x_flat
 
         u = torch.cat([u1, u2], dim=-1)
 
-        return u.reshape(y.shape[:-1] + (2,))
+        return u.reshape(y.shape[:-1] + (2, ))
 
     def push_u_given_x(
         self,
@@ -179,7 +155,7 @@ class BananaDataset(BaseSyntheticDataset):
         Returns:
             y: (..., 2)
         """
-        x = x.to(device=self.device, dtype=self.dtype)
+        x = self._fixed_condition(x)
         u = u.to(device=self.device, dtype=self.dtype)
 
         if u.shape[:-1] != x.shape[:-1]:
@@ -191,13 +167,29 @@ class BananaDataset(BaseSyntheticDataset):
         if u.shape[-1] != 2:
             raise ValueError(f"Expected u.shape[-1] = 2, got {u.shape[-1]}.")
 
-        if x.shape[-1] != 1:
-            raise ValueError(f"Expected x.shape[-1] = 1, got {x.shape[-1]}.")
-
         y1 = u[..., 0:1] * x
         y2 = u[..., 1:2] / x + u[..., 0:1].square() + x.pow(3)
 
         return torch.cat([y1, y2], dim=-1)
+
+    def log_det(
+        self,
+        x: torch.Tensor,
+        u: torch.Tensor,
+    ) -> torch.Tensor:
+        """Return the identically zero ``log |det D_u T(u)|``."""
+        x = self._fixed_condition(x)
+        u = u.to(device=self.device, dtype=self.dtype)
+
+        if u.shape[:-1] != x.shape[:-1]:
+            raise ValueError(
+                f"Expected u.shape[:-1] == x.shape[:-1], got "
+                f"{u.shape[:-1]} and {x.shape[:-1]}."
+            )
+        if u.shape[-1] != self.y_dim:
+            raise ValueError(f"Expected u.shape[-1] = {self.y_dim}, got {u.shape[-1]}.")
+
+        return torch.zeros(u.shape[:-1], device=u.device, dtype=u.dtype)
 
     def log_prob(
         self,
@@ -219,18 +211,16 @@ class BananaDataset(BaseSyntheticDataset):
 
         det = 1.
 
-        Therefore log p(y | x) = log phi(u).
+        Therefore ``log_det(x, u) = 0`` and ``log p(y | x) = log phi(u)``.
         """
         u = self.push_y_given_x(y=y, x=x)
         return -0.5 * (
-            u.square().sum(dim=-1)
-            + self.y_dim * torch.log(
-                torch.tensor(
-                    2.0 * torch.pi,
-                    device=u.device,
-                    dtype=u.dtype,
-                )
-            )
+            u.square().sum(dim=-1) + self.y_dim *
+            torch.log(torch.tensor(
+                2.0 * torch.pi,
+                device=u.device,
+                dtype=u.dtype,
+            ))
         )
 
     def prepare(self) -> None:
@@ -261,3 +251,22 @@ class BananaDataset(BaseSyntheticDataset):
 
         assert self._splits is not None
         return self._splits
+
+    def _fixed_condition(
+        self,
+        x: torch.Tensor,
+        require_batch_matrix: bool = False,
+    ) -> torch.Tensor:
+        """Validate the dummy condition shape and replace its values by two."""
+        x = x.to(device=self.device, dtype=self.dtype)
+        if x.ndim < 1 or x.shape[-1] != self.x_dim:
+            raise ValueError(
+                f"Expected x with trailing dimension {self.x_dim}, "
+                f"got shape {tuple(x.shape)}."
+            )
+        if require_batch_matrix and x.ndim != 2:
+            raise ValueError(
+                f"Expected x with shape (batch, {self.x_dim}), "
+                f"got {tuple(x.shape)}."
+            )
+        return torch.full_like(x, self.CONDITION_VALUE)

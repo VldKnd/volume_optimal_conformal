@@ -32,6 +32,7 @@ DatasetConfig = Annotated[
     | dataset_configs.BimodalGaussianDatasetConfig
     | dataset_configs.GaussianDatasetConfig
     | dataset_configs.SinusoidalTransportDatasetConfig
+    | dataset_configs.StarShapedGaussianDatasetConfig
     | dataset_configs.StudentTDatasetConfig,
     Field(discriminator="type"),
 ]

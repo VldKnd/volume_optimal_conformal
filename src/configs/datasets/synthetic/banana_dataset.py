@@ -6,17 +6,17 @@ from pydantic import BaseModel, Field
 
 
 class BananaDatasetConfig(BaseModel):
+    """Configuration for the unconditional banana-shaped dataset."""
+
     type: Literal["banana"] = "banana"
 
-    n_train: int = 10_000
-    n_calibration: int = 2_000
-    n_test: int = 2_000
+    n_train: int = Field(default=10_000, gt=0)
+    n_calibration: int = Field(default=2_000, ge=0)
+    n_test: int = Field(default=2_000, ge=0)
 
-    x_dim: int = 1
-    y_dim: int = 2
-
-    x_low: float = 0.5
-    x_high: float = 2.5
+    # A fixed one-dimensional dummy condition preserves the conditional APIs.
+    x_dim: Literal[1] = 1
+    y_dim: Literal[2] = 2
 
     seed: int = 31337
     device: str = "cpu"

@@ -269,6 +269,8 @@ class ExperimentRunner:
             self.dataset = datasets.GaussianDatasetTarget(dataset_config)
         elif dataset_config.type == "student_t_dataset":
             self.dataset = datasets.StudentTDataset(dataset_config)
+        elif dataset_config.type in {"star_shaped_gaussian", "star_shaped"}:
+            self.dataset = datasets.StarShapedGaussianDataset(dataset_config)
         else:
             self.dataset = datasets.SinusoidalTransportDataset(dataset_config)
 

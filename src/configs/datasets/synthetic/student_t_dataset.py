@@ -1,16 +1,38 @@
 from typing import Literal
-from pydantic import BaseModel, Field
+
+from pydantic import AliasChoices, BaseModel, Field
+
 
 class StudentTDatasetConfig(BaseModel):
+    """Configuration for an unconditional multivariate Student-t dataset."""
+
     type: Literal["student_t_dataset"] = "student_t_dataset"
-    n_train: int = 10_000
-    n_calibration: int = 2_000
-    n_test: int = 2_000
-    x_dim: int = 10
-    y_dim: int = 2
-    df: float = Field(default=5.0, gt=2.0)
-    min_scale: float = Field(default=0.2, gt=0.0)
-    max_scale: float = Field(default=1.0, gt=0.0)
+
+    n_train: int = Field(default=10_000, gt=0)
+    n_calibration: int = Field(default=2_000, ge=0)
+    n_test: int = Field(default=2_000, ge=0)
+
+    # A single zero-valued dummy condition preserves the conditional pipeline API.
+    x_dim: Literal[1] = 1
+    y_dim: int = Field(default=2, gt=0)
+
+    nu: float = Field(
+        default=3.0,
+        gt=0.0,
+        validation_alias=AliasChoices("nu", "df"),
+        description="Student-t degrees of freedom controlling tail weight.",
+    )
+    k: float = Field(
+        default=1.0,
+        gt=0.0,
+        description="Positive parameter defining the diagonal scale matrix.",
+    )
+
     seed: int = 0
     device: str = "cpu"
     dtype: str = "float32"
+
+    @property
+    def df(self) -> float:
+        """Backward-compatible name for the degrees of freedom."""
+        return self.nu
