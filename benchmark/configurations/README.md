@@ -173,3 +173,22 @@ before the matching rearranged configuration loads it. When scheduling runs
 independently, complete the `transport_neural_ot_l2` configurations before
 submitting their corresponding `transport_neural_ot_rearranged_l2`
 configurations.
+
+The supplied Slurm script creates one GPU job and sequentially processes all
+160 configurations. The recursively sorted configuration paths run every base
+family before the corresponding rearranged family, preserving the checkpoint
+dependency:
+
+```bash
+sbatch scripts/run_student_t_benchmark.sh \
+  benchmark/configurations/student_t
+```
+
+Override the partition or time limit through normal `sbatch` options, for
+example:
+
+```bash
+sbatch --partition=GPU --time=4-00:00:00 \
+  scripts/run_student_t_benchmark.sh \
+  benchmark/configurations/student_t
+```
