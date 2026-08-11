@@ -1,0 +1,72 @@
+name: seed_03
+seed: 3
+save_directory: benchmark/results/qm9/sweep_neural_ot_run/transport_neural_ot_l2_huge
+
+dataset_config:
+  type: qm9
+  file_path: data/qm9/qm9_mbtr_100.npz
+  raw_root: data/qm9/pyg
+  x_dim: 100
+  y_dim: 4
+  train_fraction: 0.6
+  calibration_fraction: 0.2
+  test_fraction: 0.2
+  seed: 3
+  device: cuda
+  dtype: float32
+
+predictor_config:
+  type: neural_optimal_transport
+  x_dim: 100
+  y_dim: 4
+  hidden_dim: 64
+  num_hidden_layers: 8
+  potential_type: u
+  c_transform_lr: 1.0
+  c_transform_max_iter: 1000
+  seed: 3
+  device: cuda
+  dtype: float32
+
+trainer_config:
+  epochs: 250
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  warmup_iterations: 50
+  grad_clip_norm: 10.0
+  use_cosine_scheduler: true
+  verbose: true
+
+conformal_config:
+  type: transport_based
+  coverage_mass: 0.9
+  calibrator:
+    type: norm
+    p: 2.0
+  volume_mc_samples: 1000
+  volume_batch_size: 1024
+  volume_seed: 3
+
+train_batch_size: 4096
+calibration_batch_size: 512
+test_batch_size: 512
+compute_volume: true
+metrics_verbose: true
+
+wandb:
+  mode: online
+  project: minimal-volume-conformal-prediction
+  entity: null
+  group: qm9/sweep_neural_ot_run/transport_neural_ot_l2_huge
+  name: transport_neural_ot_l2_huge_seed_03
+  tags:
+    - qm9
+    - sweep_neural_ot_run
+    - model_sweep
+    - huge
+    - neural-ot
+    - transport
+    - l2
+  job_type: transport_neural_ot_l2_huge
+  log_every_n_steps: 20
+  log_solver_diagnostics: false
