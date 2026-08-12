@@ -100,6 +100,7 @@ class RearrangedTransportPredictor(
             hidden_dimension=config.hidden_dimension,
             number_of_hidden_layers=config.number_of_hidden_layers,
             time_dependent=config.time_dependent,
+            time_encoding_dimension=config.time_encoding_dimension,
             activation=config.activation,
             activation_power=config.activation_power,
         ).to(device=self.device, dtype=self.dtype)
@@ -115,6 +116,7 @@ class RearrangedTransportPredictor(
                 hidden_dimension=self.config.hidden_dimension,
                 number_of_hidden_layers=self.config.number_of_hidden_layers,
                 time_dependent=self.config.time_dependent,
+                time_encoding_dimension=self.config.time_encoding_dimension,
                 activation=self.config.activation,
                 activation_power=self.config.activation_power,
             )

@@ -17,6 +17,7 @@ class RearrangedTransportPredictorConfig(BaseModel):
     hidden_dimension: int = Field(default=64, gt=0)
     number_of_hidden_layers: int = Field(default=2, ge=0)
     time_dependent: bool = True
+    time_encoding_dimension: int = Field(default=64, gt=0)
     vector_field_implementation: Literal[
         "standard",
         "sparse",

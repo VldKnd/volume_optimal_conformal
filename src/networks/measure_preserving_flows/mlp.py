@@ -18,6 +18,57 @@ ActivationName = Literal[
     "tanh",
 ]
 
+TRANSFORMER_POSITIONAL_ENCODING_BASE = 10_000.0
+TRANSFORMER_TIME_POSITION_SCALE = 1_024.0
+
+
+class TransformerTimeEncoding(nn.Module):
+    """Sinusoidal encoding of continuous time used by Transformers.
+
+    For channel pair ``2i, 2i + 1``, this computes
+
+    ``sin(1024 t / 10000 ** (2i / d))`` and
+    ``cos(1024 t / 10000 ** (2i / d))``.
+
+    Scaling maps the ODE interval ``[0, 1]`` to Transformer-style positions
+    ``[0, 1024]`` before encoding.
+
+    The final unpaired channel is a sine channel when ``d`` is odd.
+    """
+
+    def __init__(self, embedding_dimension: int):
+        super().__init__()
+
+        if embedding_dimension <= 0:
+            raise ValueError(
+                "embedding_dimension must be positive, "
+                f"got {embedding_dimension}."
+            )
+
+        self.embedding_dimension = embedding_dimension
+        channel_indexes = torch.arange(0, embedding_dimension, 2)
+        angular_frequencies = torch.exp(
+            channel_indexes *
+            (-math.log(TRANSFORMER_POSITIONAL_ENCODING_BASE) / embedding_dimension)
+        )
+        self.register_buffer(
+            "angular_frequencies",
+            angular_frequencies,
+            persistent=False,
+        )
+
+    def forward(self, time: torch.Tensor) -> torch.Tensor:
+        if time.shape[-1] != 1:
+            raise ValueError(f"Expected time.shape[-1] = 1, got {time.shape[-1]}.")
+
+        positions = TRANSFORMER_TIME_POSITION_SCALE * time
+        angles = positions * self.angular_frequencies
+        paired_encoding = torch.stack(
+            [torch.sin(angles), torch.cos(angles)],
+            dim=-1,
+        ).flatten(start_dim=-2)
+        return paired_encoding[..., :self.embedding_dimension]
+
 
 class PReLU(nn.Module):
     """Power ReLU: ``(1 / p) * ReLU(x) ** p``."""
@@ -102,7 +153,7 @@ class MeasurePreservingMLP(nn.Module):
         *,
         state_dim: int | None = None,
         output_dim: int | None = None,
-        time_dim: int = 1,
+        time_encoding_dimension: int,
         activation: ActivationName = "softplus",
         activation_power: float = 2.0,
     ):
@@ -112,11 +163,22 @@ class MeasurePreservingMLP(nn.Module):
         self.y_dim = y_dim
         self.state_dim = y_dim if state_dim is None else state_dim
         self.output_dim = y_dim if output_dim is None else output_dim
-        self.time_dim = time_dim
+        self.time_encoding_dimension = time_encoding_dimension
         self.activation = activation
         self.activation_power = float(activation_power)
 
-        input_dim = x_dim + self.state_dim + time_dim
+        if time_encoding_dimension < 0:
+            raise ValueError(
+                "time_encoding_dimension must be non-negative, "
+                f"got {time_encoding_dimension}."
+            )
+
+        self.time_encoding = (
+            TransformerTimeEncoding(time_encoding_dimension)
+            if time_encoding_dimension > 0 else None
+        )
+
+        input_dim = x_dim + self.state_dim + time_encoding_dimension
 
         layers: list[nn.Module] = [nn.Linear(input_dim, hidden_dim)]
 
@@ -142,18 +204,27 @@ class MeasurePreservingMLP(nn.Module):
         state: torch.Tensor,
         t: torch.Tensor,
     ) -> torch.Tensor:
-        if self.time_dim == 0:
+        if self.time_encoding is None:
             return state.new_empty(*state.shape[:-1], 0)
 
         t = torch.as_tensor(t, device=state.device, dtype=state.dtype)
 
         if t.ndim == 0:
-            return t.reshape(1).expand(*state.shape[:-1], self.time_dim)
+            t = t.reshape(1).expand(*state.shape[:-1], 1)
 
-        if t.shape == state.shape[:-1]:
+        elif t.shape == state.shape[:-1]:
             t = t.unsqueeze(-1)
 
-        return t.expand(*state.shape[:-1], self.time_dim)
+        try:
+            t = torch.broadcast_to(t, (*state.shape[:-1], 1))
+        except RuntimeError as error:
+            raise ValueError(
+                "t must be scalar or broadcastable to "
+                f"state.shape[:-1] + (1,), got t.shape={tuple(t.shape)} "
+                f"and state.shape={tuple(state.shape)}."
+            ) from error
+
+        return self.time_encoding(t)
 
     def forward(
         self,
@@ -161,5 +232,6 @@ class MeasurePreservingMLP(nn.Module):
         x: torch.Tensor,
         t: torch.Tensor,
     ) -> torch.Tensor:
-        features = torch.cat([state, x, self._time_feature(state, t)], dim=-1)
+        context = torch.cat([x, self._time_feature(state, t)], dim=-1)
+        features = torch.cat([state, context], dim=-1)
         return self.net(features)

@@ -20,6 +20,7 @@ class DenseGaussianSkewVectorField(nn.Module):
         number_of_hidden_layers: int = 2,
         context_dimension: int = 0,
         time_dependent: bool = True,
+        time_encoding_dimension: int = 64,
         activation: ActivationName = "softplus",
         activation_power: float = 2.0,
     ):
@@ -30,8 +31,15 @@ class DenseGaussianSkewVectorField(nn.Module):
         self.hidden_dimension = hidden_dimension
         self.number_of_hidden_layers = number_of_hidden_layers
         self.time_dependent = time_dependent
+        self.time_encoding_dimension = time_encoding_dimension
         self.activation = activation
         self.activation_power = float(activation_power)
+
+        if time_encoding_dimension <= 0:
+            raise ValueError(
+                "time_encoding_dimension must be positive, "
+                f"got {time_encoding_dimension}."
+            )
 
         skew_matrix_indexes_i, skew_matrix_indexes_j = torch.triu_indices(
             dimension,
@@ -55,7 +63,7 @@ class DenseGaussianSkewVectorField(nn.Module):
             y_dim=dimension,
             state_dim=dimension,
             output_dim=number_of_skew_entries,
-            time_dim=int(time_dependent),
+            time_encoding_dimension=(time_encoding_dimension if time_dependent else 0),
             hidden_dim=hidden_dimension,
             num_hidden_layers=number_of_hidden_layers,
             activation=activation,
