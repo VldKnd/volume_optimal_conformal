@@ -23,9 +23,8 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
 
     One coverage mass is sampled uniformly from ``(0, 1)`` for every context
     point. The same value determines both the latent chi-ball radius and the
-    coverage context supplied to the rearrangement vector field. Each
-    context-level loss is weighted by ``radius**(-y_dim)`` before the minibatch
-    mean is taken.
+    coverage context supplied to the rearrangement vector field. The resulting
+    context-level log-volume estimates are averaged over the minibatch.
     """
 
     config_class = AmortizedRearrangedTransportTrainerConfig
@@ -96,11 +95,9 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
 
         for epoch in progress:
             start = time.perf_counter()
-            epoch_losses: list[torch.Tensor] = []
             epoch_log_volume_losses: list[torch.Tensor] = []
             coverage_mass_batches: list[torch.Tensor] = []
             radius_batches: list[torch.Tensor] = []
-            level_loss_scale_batches: list[torch.Tensor] = []
 
             for batch in dataloader:
                 batch_start = (
@@ -142,12 +139,7 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
                     coverage_mass=repeated_coverage_masses,
                     mc_samples_per_x=self.config.mc_samples_per_x,
                 )
-                level_loss_scales = self._level_loss_scales(
-                    radii=radii,
-                    dimension=predictor.y_dim,
-                )
-                losses = level_loss_scales * log_volume_losses
-                loss = losses.mean()
+                loss = log_volume_losses.mean()
 
                 if not torch.isfinite(loss):
                     raise FloatingPointError(
@@ -169,20 +161,14 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
                     scheduler.step()
 
                 loss_value = float(loss.detach().cpu())
-                log_volume_loss_value = float(log_volume_losses.detach().mean().cpu())
-                epoch_losses.append(losses.detach().cpu())
                 epoch_log_volume_losses.append(log_volume_losses.detach().cpu())
                 coverage_mass_batches.append(coverage_masses.detach().cpu())
                 radius_batches.append(radii.detach().cpu())
-                level_loss_scale_batches.append(level_loss_scales.detach().cpu())
                 if batch_start is not None:
                     batch_metrics = {
                         "epoch": epoch + 1,
                         "loss": loss_value,
-                        "log_volume_loss": log_volume_loss_value,
-                        "level_loss_scale": float(level_loss_scales.mean()),
-                        "level_loss_scale_min": float(level_loss_scales.min()),
-                        "level_loss_scale_max": float(level_loss_scales.max()),
+                        "log_volume_loss": loss_value,
                         "gradient_norm": gradient_norm,
                         "learning_rate": optimizer.param_groups[0]["lr"],
                         "coverage_mass": float(coverage_masses.mean()),
@@ -197,22 +183,16 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
                     batch_metrics.update(self._rearrangement_flow_metrics(predictor))
                     self._record_batch(batch_metrics)
 
-            loss_tensor = torch.cat(epoch_losses)
             log_volume_loss_tensor = torch.cat(epoch_log_volume_losses)
             coverage_tensor = torch.cat(coverage_mass_batches)
             radius_tensor = torch.cat(radius_batches)
-            level_loss_scale_tensor = torch.cat(level_loss_scale_batches)
-            epoch_loss = float(loss_tensor.mean())
             epoch_log_volume_loss = float(log_volume_loss_tensor.mean())
 
             self._record_epoch(
                 {
                     "epoch": epoch + 1,
-                    "loss": epoch_loss,
+                    "loss": epoch_log_volume_loss,
                     "log_volume_loss": epoch_log_volume_loss,
-                    "level_loss_scale_mean": float(level_loss_scale_tensor.mean()),
-                    "level_loss_scale_min": float(level_loss_scale_tensor.min()),
-                    "level_loss_scale_max": float(level_loss_scale_tensor.max()),
                     "coverage_mass_mean": float(coverage_tensor.mean()),
                     "coverage_mass_min": float(coverage_tensor.min()),
                     "coverage_mass_max": float(coverage_tensor.max()),
@@ -227,7 +207,7 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
 
             if self.config.verbose:
                 progress.set_description(
-                    f"Epoch {epoch + 1} | Normalized loss {epoch_loss:.4f} "
+                    f"Epoch {epoch + 1} | Log-volume {epoch_log_volume_loss:.4f} "
                     f"| Mean coverage {float(coverage_tensor.mean()):.3f}"
                 )
 
@@ -268,22 +248,6 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
             weights=weights,
             mc_samples_per_x=mc_samples_per_x,
         )
-
-    @staticmethod
-    def _level_loss_scales(
-        radii: torch.Tensor,
-        dimension: int,
-    ) -> torch.Tensor:
-        """Return each latent ball's inverse radius power ``r**(-d)``."""
-        if not isinstance(radii, torch.Tensor):
-            raise TypeError("radii must be a tensor.")
-        if not torch.isfinite(radii).all() or not (radii > 0.0).all():
-            raise ValueError("radii must be finite and positive.")
-        if isinstance(dimension, bool) or not isinstance(dimension, int):
-            raise TypeError("dimension must be an integer.")
-        if dimension < 1:
-            raise ValueError("dimension must be positive.")
-        return radii.pow(-dimension)
 
     @staticmethod
     def _sample_coverage_masses(
