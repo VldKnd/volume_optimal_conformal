@@ -30,7 +30,6 @@ class SparseGaussianSkewVectorField(nn.Module):
         number_of_hidden_layers: int = 2,
         context_dimension: int = 0,
         time_dependent: bool = True,
-        time_encoding_dimension: int = 64,
         activation: ActivationName = "softplus",
         activation_power: float = 2.0,
     ):
@@ -44,16 +43,9 @@ class SparseGaussianSkewVectorField(nn.Module):
         self.hidden_dimension = hidden_dimension
         self.number_of_hidden_layers = number_of_hidden_layers
         self.time_dependent = time_dependent
-        self.time_encoding_dimension = time_encoding_dimension
         self.activation = activation
         self.activation_power = float(activation_power)
         self.number_of_edges = dimension - 1
-
-        if time_encoding_dimension <= 0:
-            raise ValueError(
-                "time_encoding_dimension must be positive, "
-                f"got {time_encoding_dimension}."
-            )
 
         edge_indexes = torch.arange(self.number_of_edges)
         self.register_buffer("edge_indexes", edge_indexes)
@@ -63,7 +55,7 @@ class SparseGaussianSkewVectorField(nn.Module):
             y_dim=dimension,
             state_dim=dimension,
             output_dim=self.number_of_edges,
-            time_encoding_dimension=(time_encoding_dimension if time_dependent else 0),
+            time_dim=int(time_dependent),
             hidden_dim=hidden_dimension,
             num_hidden_layers=number_of_hidden_layers,
             activation=activation,

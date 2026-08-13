@@ -4,7 +4,7 @@ save_directory: benchmark/results/synthetic/sinusoidal_transport/transport_neura
 
 dataset_config:
   type: sinusoidal_transport
-  n_train: 20000
+  n_train: 100000
   n_calibration: 1000
   n_test: 1000
   x_dim: 1
@@ -17,8 +17,9 @@ predictor_config:
   type: neural_optimal_transport
   x_dim: 1
   y_dim: 2
-  hidden_dim: 16
+  hidden_dim: 64
   num_hidden_layers: 8
+  potential_type: u
   c_transform_lr: 1.0
   c_transform_max_iter: 1000
   seed: 3
@@ -26,11 +27,11 @@ predictor_config:
   dtype: float32
 
 trainer_config:
-  epochs: 500
+  epochs: 250
   learning_rate: 0.001
   weight_decay: 0.0001
   warmup_iterations: 10
-  grad_clip_norm: 1.0
+  grad_clip_norm: 10.0
   use_cosine_scheduler: true
   verbose: true
 
@@ -58,6 +59,7 @@ wandb:
   tags:
     - synthetic
     - neural-ot
+    - big
     - transport
     - l2
     - sinusoidal_transport

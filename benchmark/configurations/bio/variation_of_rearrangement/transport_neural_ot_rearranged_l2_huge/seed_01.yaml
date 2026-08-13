@@ -44,7 +44,6 @@ rearrangement_config:
   hidden_dimension: 64
   number_of_hidden_layers: 8
   time_dependent: true
-  time_encoding_dimension: 32
   vector_field_implementation: sparse
   activation: silu
   activation_power: 2.0

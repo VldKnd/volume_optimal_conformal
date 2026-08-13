@@ -154,7 +154,6 @@ def _build_rearrangement_flow_from_config(
             hidden_dimension=cpu_config.hidden_dimension,
             number_of_hidden_layers=cpu_config.number_of_hidden_layers,
             time_dependent=cpu_config.time_dependent,
-            time_encoding_dimension=cpu_config.time_encoding_dimension,
             activation=cpu_config.activation,
             activation_power=cpu_config.activation_power,
         )
@@ -172,7 +171,6 @@ def _build_rearrangement_flow_from_config(
         hidden_dimension=cpu_config.hidden_dimension,
         number_of_hidden_layers=cpu_config.number_of_hidden_layers,
         time_dependent=cpu_config.time_dependent,
-        time_encoding_dimension=cpu_config.time_encoding_dimension,
         activation=cpu_config.activation,
         activation_power=cpu_config.activation_power,
     )
