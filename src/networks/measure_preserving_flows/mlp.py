@@ -129,7 +129,12 @@ class MeasurePreservingMLP(nn.Module):
             )
             layers.append(nn.Linear(hidden_dim, hidden_dim))
 
-        layers.append(make_activation("tanh"))
+        layers.append(
+                make_activation(
+                    activation,
+                    activation_power=activation_power,
+                )
+        )
 
         output_layer = nn.Linear(hidden_dim, self.output_dim)
         nn.init.zeros_(output_layer.weight)
