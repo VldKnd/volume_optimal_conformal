@@ -144,34 +144,20 @@ class ExperimentRunner:
                 else None
             )
             if config.rearrangement_config.type == "amortized_rearranged_transport":
-                if (
-                    requested_rearrangement_trainer
-                    == "experimental_amortized_rearrangement"
-                ):
-                    rearrangement_class = (
-                        rearranged_predictors.AmortizedRearrangedTransport
-                    )
-                    rearrangement_trainer_class = (
-                        rearranged_trainers.ExperimentalAmortizedRearrangementTrainer
-                    )
-                    rearrangement_trainer_config_class = (
-                        rearranged_configs.ExperimentalAmortizedRearrangementTrainerConfig
-                    )
-                elif requested_rearrangement_trainer is not None:
+                if requested_rearrangement_trainer is not None:
                     raise ValueError(
-                        "Unknown amortized rearrangement trainer type "
+                        "Amortized rearrangement does not accept trainer type "
                         f"{requested_rearrangement_trainer!r}."
                     )
-                else:
-                    rearrangement_class = (
-                        rearranged_predictors.AmortizedRearrangedTransport
-                    )
-                    rearrangement_trainer_class = (
-                        rearranged_trainers.AmortizedRearrangedTransportTrainer
-                    )
-                    rearrangement_trainer_config_class = (
-                        rearranged_configs.AmortizedRearrangedTransportTrainerConfig
-                    )
+                rearrangement_class = (
+                    rearranged_predictors.AmortizedRearrangedTransport
+                )
+                rearrangement_trainer_class = (
+                    rearranged_trainers.AmortizedRearrangedTransportTrainer
+                )
+                rearrangement_trainer_config_class = (
+                    rearranged_configs.AmortizedRearrangedTransportTrainerConfig
+                )
             else:
                 rearrangement_class = (
                     rearranged_predictors.RearrangedTransportPredictor

@@ -23,8 +23,9 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
 
     One coverage mass is sampled uniformly from ``(0, 1)`` for every context
     point. The same value determines both the latent chi-ball radius and the
-    coverage context supplied to the rearrangement vector field. The resulting
-    context-level log-volume estimates are averaged over the minibatch.
+    coverage context supplied to the rearrangement vector field. Latent points
+    follow the standard Gaussian conditioned on that ball. The objective is
+    the direct sample mean of the full composition log-Jacobian.
     """
 
     config_class = AmortizedRearrangedTransportTrainerConfig
@@ -245,7 +246,7 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
             coverage_mass=coverage_mass,
         )
 
-        return self._grouped_log_mean_exp(
+        return self._grouped_mean(
             weights=weights,
             mc_samples_per_x=mc_samples_per_x,
         )
@@ -288,11 +289,41 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
         device: torch.device,
         dtype: torch.dtype,
     ) -> torch.Tensor:
-        del coverage_masses
-        return self._sample_uniform_ball(
-            batch_size=batch_size,
-            dimension=dimension,
-            radius=1.0,
+        directions = torch.randn(
+            batch_size,
+            dimension,
             device=device,
             dtype=dtype,
-        ) * maximum_radii.unsqueeze(-1)
+        )
+        directions = directions / directions.norm(dim=-1, keepdim=True).clamp_min(
+            torch.finfo(dtype).eps
+        )
+
+        conditional_masses = torch.rand(
+            batch_size,
+            device=device,
+            dtype=dtype,
+        ) * coverage_masses
+        sampled_radii = self._ball_radii(
+            coverage_masses=conditional_masses,
+            dimension=dimension,
+        )
+        sampled_radii = torch.minimum(sampled_radii, maximum_radii)
+        return directions * sampled_radii.unsqueeze(-1)
+
+    @staticmethod
+    def _grouped_mean(
+        weights: torch.Tensor,
+        mc_samples_per_x: int,
+    ) -> torch.Tensor:
+        if mc_samples_per_x < 1:
+            raise ValueError("mc_samples_per_x must be positive.")
+
+        weights = weights.reshape(-1)
+        if weights.numel() % mc_samples_per_x != 0:
+            raise ValueError(
+                "Number of log-det weights must be divisible by "
+                f"mc_samples_per_x={mc_samples_per_x}, got {weights.numel()}."
+            )
+
+        return weights.reshape(-1, mc_samples_per_x).mean(dim=1)
