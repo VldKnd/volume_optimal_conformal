@@ -89,7 +89,7 @@ wandb:
   project: minimal-volume-conformal-prediction
   entity: null
   group: bio/sweep_neural_ot_run/transport_neural_ot_rearranged_l2_huge
-  name: transport_neural_ot_rearranged_l2_huge_seed_00
+  name: transport_neural_ot_rearranged_l2_wide_tiny_seed_00
   tags:
     - bio
     - sweep_neural_ot_run
