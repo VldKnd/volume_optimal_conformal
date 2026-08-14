@@ -1,0 +1,71 @@
+name: seed_03
+seed: 3
+save_directory: benchmark/results/scm20d/transport_rearrangement_14_08/transport_realnvp_cdf
+
+dataset_config:
+  type: scm20d
+  file_path: data/scm20d/file1730492b4408.arff
+  x_dim: 61
+  y_dim: 16
+  train_fraction: 0.6
+  calibration_fraction: 0.2
+  test_fraction: 0.2
+  seed: 3
+  device: cuda
+  dtype: float32
+
+predictor_config:
+  type: normalizing_flow
+  x_dim: 61
+  y_dim: 16
+  hidden_dim: 64
+  num_hidden_layers: 4
+  num_flow_layers: 4
+  log_scale_bound: 3.0
+  seed: 3
+  device: cuda
+  dtype: float32
+predictor_checkpoint: benchmark/results/scm20d/transport_rearrangement_14_08/transport_realnvp_l2/seed_03/base/predictor.pt
+
+trainer_config:
+  epochs: 250
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  grad_clip_norm: 10.0
+  use_cosine_scheduler: true
+  verbose: true
+
+conformal_config:
+  type: transport_based
+  coverage_mass: 0.9
+  calibrator:
+    type: cdf_calibrator
+    n_cdf_samples: 32
+    cdf_batch_size: 65536
+  volume_mc_samples: 1000
+  volume_batch_size: 1024
+  volume_n_neighbors: 100
+  volume_seed: 3
+
+train_batch_size: 256
+calibration_batch_size: 512
+test_batch_size: 512
+compute_volume: true
+metrics_verbose: true
+
+wandb:
+  mode: online
+  project: minimal-volume-conformal-prediction
+  entity: null
+  group: scm20d/transport_rearrangement_14_08/transport_realnvp_cdf
+  name: transport_realnvp_cdf_seed_03
+  tags:
+    - scm20d
+    - transport_rearrangement_14_08
+    - transport
+    - normalizing-flow
+    - realnvp
+    - cdf
+  job_type: transport_realnvp_cdf
+  log_every_n_steps: 20
+  log_solver_diagnostics: false

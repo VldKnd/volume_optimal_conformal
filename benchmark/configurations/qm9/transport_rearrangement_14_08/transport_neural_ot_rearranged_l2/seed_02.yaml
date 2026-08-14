@@ -1,32 +1,33 @@
-name: seed_01
-seed: 1
-save_directory: benchmark/results/bio/experimental_loss
+name: seed_02
+seed: 2
+save_directory: benchmark/results/qm9/transport_rearrangement_14_08/transport_neural_ot_rearranged_l2
 
 dataset_config:
-  type: bio
-  file_path: data/bio/CASP.csv
-  x_dim: 8
-  y_dim: 2
+  type: qm9
+  file_path: data/qm9/qm9_mbtr_100.npz
+  raw_root: data/qm9/pyg
+  x_dim: 100
+  y_dim: 4
   train_fraction: 0.6
   calibration_fraction: 0.2
   test_fraction: 0.2
-  seed: 1
+  seed: 2
   device: cuda
   dtype: float32
 
 predictor_config:
   type: neural_optimal_transport
-  x_dim: 8
-  y_dim: 2
+  x_dim: 100
+  y_dim: 4
   hidden_dim: 64
   num_hidden_layers: 8
   potential_type: u
   c_transform_lr: 1.0
   c_transform_max_iter: 1000
-  seed: 1
+  seed: 2
   device: cuda
   dtype: float32
-predictor_checkpoint: benchmark/results/bio/sweep_neural_ot_run/transport_neural_ot_l2_huge/seed_01/base/predictor.pt
+predictor_checkpoint: benchmark/results/qm9/sweep_neural_ot_run/transport_neural_ot_l2_huge/seed_02/base/predictor.pt
 
 trainer_config:
   epochs: 250
@@ -39,8 +40,8 @@ trainer_config:
 
 rearrangement_config:
   type: amortized_rearranged_transport
-  x_dim: 8
-  y_dim: 2
+  x_dim: 100
+  y_dim: 4
   hidden_dimension: 256
   number_of_hidden_layers: 1
   time_dependent: true
@@ -48,10 +49,10 @@ rearrangement_config:
   activation: silu
   use_adjoint: false
   method: dopri5
-  rtol: 1.0e-5
-  atol: 1.0e-6
+  rtol: 1.0e-05
+  atol: 1.0e-06
   number_of_steps: null
-  seed: 1
+  seed: 2
   device: cuda
   dtype: float32
 
@@ -75,7 +76,7 @@ conformal_config:
     p: 2.0
   volume_mc_samples: 1000
   volume_batch_size: 1024
-  volume_seed: 1
+  volume_seed: 2
 
 train_batch_size: 4096
 rearrangement_train_batch_size: 512
@@ -88,19 +89,18 @@ wandb:
   mode: online
   project: minimal-volume-conformal-prediction
   entity: null
-  group: bio/experimental_loss
-  name: experimental_amortized_mean_log_seed_01
+  group: qm9/transport_rearrangement_14_08/transport_neural_ot_rearranged_l2
+  name: transport_neural_ot_rearranged_l2_seed_02
   tags:
-    - bio
-    - experimental_loss
-    - neural-ot
+    - qm9
+    - transport_rearrangement_14_08
     - transport
+    - neural-ot
     - l2
     - rearranged
     - amortized
-    - mean-log
     - sparse
     - dopri5
-  job_type: experimental_loss
+  job_type: transport_neural_ot_rearranged_l2
   log_every_n_steps: 20
   log_solver_diagnostics: true

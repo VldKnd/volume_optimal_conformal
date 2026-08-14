@@ -1,6 +1,6 @@
-name: seed_01
-seed: 1
-save_directory: benchmark/results/bio/experimental_loss
+name: seed_03
+seed: 3
+save_directory: benchmark/results/bio/transport_rearrangement_14_08/transport_neural_ot_rearranged_l2
 
 dataset_config:
   type: bio
@@ -10,7 +10,7 @@ dataset_config:
   train_fraction: 0.6
   calibration_fraction: 0.2
   test_fraction: 0.2
-  seed: 1
+  seed: 3
   device: cuda
   dtype: float32
 
@@ -23,10 +23,10 @@ predictor_config:
   potential_type: u
   c_transform_lr: 1.0
   c_transform_max_iter: 1000
-  seed: 1
+  seed: 3
   device: cuda
   dtype: float32
-predictor_checkpoint: benchmark/results/bio/sweep_neural_ot_run/transport_neural_ot_l2_huge/seed_01/base/predictor.pt
+predictor_checkpoint: benchmark/results/bio/sweep_neural_ot_run/transport_neural_ot_l2_huge/seed_03/base/predictor.pt
 
 trainer_config:
   epochs: 250
@@ -48,10 +48,10 @@ rearrangement_config:
   activation: silu
   use_adjoint: false
   method: dopri5
-  rtol: 1.0e-5
-  atol: 1.0e-6
+  rtol: 1.0e-05
+  atol: 1.0e-06
   number_of_steps: null
-  seed: 1
+  seed: 3
   device: cuda
   dtype: float32
 
@@ -75,7 +75,7 @@ conformal_config:
     p: 2.0
   volume_mc_samples: 1000
   volume_batch_size: 1024
-  volume_seed: 1
+  volume_seed: 3
 
 train_batch_size: 4096
 rearrangement_train_batch_size: 512
@@ -88,19 +88,18 @@ wandb:
   mode: online
   project: minimal-volume-conformal-prediction
   entity: null
-  group: bio/experimental_loss
-  name: experimental_amortized_mean_log_seed_01
+  group: bio/transport_rearrangement_14_08/transport_neural_ot_rearranged_l2
+  name: transport_neural_ot_rearranged_l2_seed_03
   tags:
     - bio
-    - experimental_loss
-    - neural-ot
+    - transport_rearrangement_14_08
     - transport
+    - neural-ot
     - l2
     - rearranged
     - amortized
-    - mean-log
     - sparse
     - dopri5
-  job_type: experimental_loss
+  job_type: transport_neural_ot_rearranged_l2
   log_every_n_steps: 20
   log_solver_diagnostics: true

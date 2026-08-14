@@ -56,7 +56,6 @@ rearrangement_config:
   dtype: float32
 
 rearrangement_trainer_config:
-  type: experimental_amortized_rearrangement
   epochs: 100
   mc_samples_per_x: 32
   train_transport_map: false
