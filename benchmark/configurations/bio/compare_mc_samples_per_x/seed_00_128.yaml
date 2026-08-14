@@ -1,0 +1,108 @@
+name: seed_00
+seed: 0
+save_directory: benchmark/results/bio/sweep_neural_ot_run/transport_neural_ot_rearranged_128
+
+dataset_config:
+  type: bio
+  file_path: data/bio/CASP.csv
+  x_dim: 8
+  y_dim: 2
+  train_fraction: 0.6
+  calibration_fraction: 0.2
+  test_fraction: 0.2
+  seed: 0
+  device: cuda
+  dtype: float32
+
+predictor_config:
+  type: neural_optimal_transport
+  x_dim: 8
+  y_dim: 2
+  hidden_dim: 64
+  num_hidden_layers: 8
+  potential_type: u
+  c_transform_lr: 1.0
+  c_transform_max_iter: 1000
+  seed: 0
+  device: cuda
+  dtype: float32
+predictor_checkpoint: benchmark/results/bio/sweep_neural_ot_run/transport_neural_ot_l2_huge/seed_00/base/predictor.pt
+
+trainer_config:
+  epochs: 250
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  warmup_iterations: 50
+  grad_clip_norm: 10.0
+  use_cosine_scheduler: true
+  verbose: true
+
+rearrangement_config:
+  type: amortized_rearranged_transport
+  x_dim: 8
+  y_dim: 2
+  hidden_dim: 256
+  num_hidden_layers: 1
+  time_dependent: true
+  vector_field_implementation: sparse
+  activation: silu
+  use_adjoint: false
+  method: dopri5
+  rtol: 1.0e-05
+  atol: 1.0e-06
+  number_of_steps: null
+  seed: 0
+  device: cuda
+  dtype: float32
+
+rearrangement_trainer_config:
+  epochs: 100
+  mc_samples_per_x: 128
+  train_transport_map: false
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  grad_clip_norm: 10.0
+  use_cosine_scheduler: true
+  verbose: true
+
+supervised_rearrangement: false
+
+conformal_config:
+  type: transport_based
+  coverage_mass: 0.9
+  calibrator:
+    type: norm
+    p: 2.0
+  volume_mc_samples: 1000
+  volume_batch_size: 1024
+  volume_seed: 0
+
+train_batch_size: 4096
+rearrangement_train_batch_size: 512
+calibration_batch_size: 512
+test_batch_size: 512
+compute_volume: true
+metrics_verbose: true
+
+wandb:
+  mode: online
+  project: minimal-volume-conformal-prediction
+  entity: null
+  group: bio/sweep_neural_ot_run/transport_neural_ot_rearranged_l2_huge
+  name: transport_neural_ot_rearranged_l2_128
+  tags:
+    - bio
+    - mc_samples_per_x
+    - sweep_neural_ot_run
+    - model_sweep
+    - huge
+    - neural-ot
+    - transport
+    - l2
+    - rearranged
+    - amortized
+    - sparse
+    - dopri5
+  job_type: transport_neural_ot_rearranged_l2_huge
+  log_every_n_steps: 20
+  log_solver_diagnostics: true
