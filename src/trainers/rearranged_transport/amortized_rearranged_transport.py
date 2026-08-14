@@ -96,7 +96,7 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
 
         for epoch in progress:
             start = time.perf_counter()
-            epoch_log_volume_losses: list[torch.Tensor] = []
+            epoch_training_losses: list[torch.Tensor] = []
             coverage_mass_batches: list[torch.Tensor] = []
             radius_batches: list[torch.Tensor] = []
 
@@ -125,7 +125,7 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
                 repeated_radii = radii.repeat_interleave(
                     self.config.mc_samples_per_x,
                 )
-                u = self._sample_latent_points(
+                u = self._sample_training_points(
                     batch_size=x.shape[0],
                     dimension=predictor.y_dim,
                     coverage_masses=repeated_coverage_masses,
@@ -134,14 +134,14 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
                     dtype=predictor.dtype,
                 )
 
-                log_volume_losses = self.estimate_log_volumes(
+                training_losses = self.estimate_training_losses(
                     predictor=predictor,
                     x=x,
                     u=u,
                     coverage_mass=repeated_coverage_masses,
                     mc_samples_per_x=self.config.mc_samples_per_x,
                 )
-                loss = log_volume_losses.mean()
+                loss = training_losses.mean()
 
                 if not torch.isfinite(loss):
                     raise FloatingPointError(
@@ -163,14 +163,14 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
                     scheduler.step()
 
                 loss_value = float(loss.detach().cpu())
-                epoch_log_volume_losses.append(log_volume_losses.detach().cpu())
+                epoch_training_losses.append(training_losses.detach().cpu())
                 coverage_mass_batches.append(coverage_masses.detach().cpu())
                 radius_batches.append(radii.detach().cpu())
                 if batch_start is not None:
                     batch_metrics = {
                         "epoch": epoch + 1,
                         "loss": loss_value,
-                        "log_volume_loss": loss_value,
+                        "mean_log_det_loss": loss_value,
                         "gradient_norm": gradient_norm,
                         "learning_rate": optimizer.param_groups[0]["lr"],
                         "coverage_mass": float(coverage_masses.mean()),
@@ -185,16 +185,16 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
                     batch_metrics.update(self._rearrangement_flow_metrics(predictor))
                     self._record_batch(batch_metrics)
 
-            log_volume_loss_tensor = torch.cat(epoch_log_volume_losses)
+            training_loss_tensor = torch.cat(epoch_training_losses)
             coverage_tensor = torch.cat(coverage_mass_batches)
             radius_tensor = torch.cat(radius_batches)
-            epoch_log_volume_loss = float(log_volume_loss_tensor.mean())
+            epoch_training_loss = float(training_loss_tensor.mean())
 
             self._record_epoch(
                 {
                     "epoch": epoch + 1,
-                    "loss": epoch_log_volume_loss,
-                    "log_volume_loss": epoch_log_volume_loss,
+                    "loss": epoch_training_loss,
+                    "mean_log_det_loss": epoch_training_loss,
                     "coverage_mass_mean": float(coverage_tensor.mean()),
                     "coverage_mass_min": float(coverage_tensor.min()),
                     "coverage_mass_max": float(coverage_tensor.max()),
@@ -209,7 +209,7 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
 
             if self.config.verbose:
                 progress.set_description(
-                    f"Epoch {epoch + 1} | Log-volume {epoch_log_volume_loss:.4f} "
+                    f"Epoch {epoch + 1} | Mean log-det {epoch_training_loss:.4f} "
                     f"| Mean coverage {float(coverage_tensor.mean()):.3f}"
                 )
 
@@ -224,6 +224,7 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
         coverage_mass: torch.Tensor | float,
         mc_samples_per_x: int = 1,
     ) -> torch.Tensor:
+        """Estimate log-volume from points sampled uniformly in each ball."""
         return self.estimate_log_volumes(
             predictor=predictor,
             x=x,
@@ -240,12 +241,49 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
         coverage_mass: torch.Tensor | float,
         mc_samples_per_x: int = 1,
     ) -> torch.Tensor:
+        """Return per-context uniform-ball log-mean-exp estimates."""
         weights = predictor.log_det(
             x=x,
             u=u,
             coverage_mass=coverage_mass,
         )
 
+        return self._grouped_log_mean_exp(
+            weights=weights,
+            mc_samples_per_x=mc_samples_per_x,
+        )
+
+    def estimate_training_loss(
+        self,
+        predictor: AmortizedRearrangedTransport,
+        x: torch.Tensor,
+        u: torch.Tensor,
+        coverage_mass: torch.Tensor | float,
+        mc_samples_per_x: int = 1,
+    ) -> torch.Tensor:
+        """Estimate the loss from truncated-Gaussian latent points."""
+        return self.estimate_training_losses(
+            predictor=predictor,
+            x=x,
+            u=u,
+            coverage_mass=coverage_mass,
+            mc_samples_per_x=mc_samples_per_x,
+        ).mean()
+
+    def estimate_training_losses(
+        self,
+        predictor: AmortizedRearrangedTransport,
+        x: torch.Tensor,
+        u: torch.Tensor,
+        coverage_mass: torch.Tensor | float,
+        mc_samples_per_x: int = 1,
+    ) -> torch.Tensor:
+        """Return per-context means of composition log-Jacobians."""
+        weights = predictor.log_det(
+            x=x,
+            u=u,
+            coverage_mass=coverage_mass,
+        )
         return self._grouped_mean(
             weights=weights,
             mc_samples_per_x=mc_samples_per_x,
@@ -280,7 +318,7 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
             dtype=coverage_masses.dtype,
         )
 
-    def _sample_latent_points(
+    def _sample_training_points(
         self,
         batch_size: int,
         dimension: int,
