@@ -49,7 +49,7 @@ rearrangement_config:
   use_adjoint: false
   method: dopri5
   rtol: 1.0e-5
-  atol: 1.0e-06
+  atol: 1.0e-6
   number_of_steps: null
   seed: 1
   device: cuda

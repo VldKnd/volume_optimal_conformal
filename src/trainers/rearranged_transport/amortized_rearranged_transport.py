@@ -124,13 +124,14 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
                 repeated_radii = radii.repeat_interleave(
                     self.config.mc_samples_per_x,
                 )
-                u = self._sample_uniform_ball(
+                u = self._sample_latent_points(
                     batch_size=x.shape[0],
                     dimension=predictor.y_dim,
-                    radius=1.0,
+                    coverage_masses=repeated_coverage_masses,
+                    maximum_radii=repeated_radii,
                     device=predictor.device,
                     dtype=predictor.dtype,
-                ) * repeated_radii.unsqueeze(-1)
+                )
 
                 log_volume_losses = self.estimate_log_volumes(
                     predictor=predictor,
@@ -277,3 +278,21 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
             device=coverage_masses.device,
             dtype=coverage_masses.dtype,
         )
+
+    def _sample_latent_points(
+        self,
+        batch_size: int,
+        dimension: int,
+        coverage_masses: torch.Tensor,
+        maximum_radii: torch.Tensor,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        del coverage_masses
+        return self._sample_uniform_ball(
+            batch_size=batch_size,
+            dimension=dimension,
+            radius=1.0,
+            device=device,
+            dtype=dtype,
+        ) * maximum_radii.unsqueeze(-1)

@@ -16,10 +16,13 @@ from trainers.rearranged_transport.amortized_rearranged_transport import (
 class ExperimentalAmortizedRearrangementTrainer(
     AmortizedRearrangedTransportTrainer
 ):
-    """Train an amortized rearrangement using mean log-volume weights.
+    """Train an amortized rearrangement over truncated Gaussian balls.
 
-    This replaces the standard per-context ``logsumexp(weights) - log(n)``
-    estimator with the direct arithmetic mean of the log-det weights.
+    For each selected coverage mass, samples follow the standard Gaussian
+    conditioned on its corresponding chi ball. The per-context objective is
+    the direct Monte Carlo mean of the full composition log-Jacobian
+
+        log |det D (T_x o S_x)(u)|.
     """
 
     config_class = ExperimentalAmortizedRearrangementTrainerConfig
@@ -56,6 +59,37 @@ class ExperimentalAmortizedRearrangementTrainer(
             weights=weights,
             mc_samples_per_x=mc_samples_per_x,
         )
+
+    def _sample_latent_points(
+        self,
+        batch_size: int,
+        dimension: int,
+        coverage_masses: torch.Tensor,
+        maximum_radii: torch.Tensor,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        directions = torch.randn(
+            batch_size,
+            dimension,
+            device=device,
+            dtype=dtype,
+        )
+        directions = directions / directions.norm(dim=-1, keepdim=True).clamp_min(
+            torch.finfo(dtype).eps
+        )
+
+        conditional_masses = torch.rand(
+            batch_size,
+            device=device,
+            dtype=dtype,
+        ) * coverage_masses
+        sampled_radii = self._ball_radii(
+            coverage_masses=conditional_masses,
+            dimension=dimension,
+        )
+        sampled_radii = torch.minimum(sampled_radii, maximum_radii)
+        return directions * sampled_radii.unsqueeze(-1)
 
     @staticmethod
     def _grouped_mean(
