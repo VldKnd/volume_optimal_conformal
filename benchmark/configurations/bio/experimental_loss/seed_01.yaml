@@ -89,7 +89,7 @@ wandb:
   project: minimal-volume-conformal-prediction
   entity: null
   group: bio/experimental_loss
-  name: experimental_loss_seed_01
+  name: experimental_loss_l2_seed_01
   tags:
     - bio
     - experimental_loss
