@@ -135,7 +135,20 @@ class ExperimentRunner:
         rearrangement_trainer_class = None
         rearrangement_trainer_config = None
         if config.rearrangement_config is not None:
+            trainer_data = config.rearrangement_trainer_config
+            if hasattr(trainer_data, "model_dump"):
+                trainer_data = trainer_data.model_dump()
+            requested_rearrangement_trainer = (
+                trainer_data.get("type")
+                if isinstance(trainer_data, dict)
+                else None
+            )
             if config.rearrangement_config.type == "amortized_rearranged_transport":
+                if requested_rearrangement_trainer is not None:
+                    raise ValueError(
+                        "Amortized rearrangement does not accept a fixed "
+                        "rearrangement trainer type."
+                    )
                 rearrangement_class = (
                     rearranged_predictors.AmortizedRearrangedTransport
                 )
@@ -149,7 +162,24 @@ class ExperimentRunner:
                 rearrangement_class = (
                     rearranged_predictors.RearrangedTransportPredictor
                 )
-                if config.supervised_rearrangement:
+                if requested_rearrangement_trainer == "experimental_rearrangement":
+                    if config.supervised_rearrangement:
+                        raise ValueError(
+                            "Experimental rearrangement training cannot also be "
+                            "supervised."
+                        )
+                    rearrangement_trainer_class = (
+                        rearranged_trainers.ExperimentalRearrangementTrainer
+                    )
+                    rearrangement_trainer_config_class = (
+                        rearranged_configs.ExperimentalRearrangementTrainerConfig
+                    )
+                elif requested_rearrangement_trainer is not None:
+                    raise ValueError(
+                        "Unknown rearrangement trainer type "
+                        f"{requested_rearrangement_trainer!r}."
+                    )
+                elif config.supervised_rearrangement:
                     rearrangement_trainer_class = (
                         rearranged_trainers.SupervisedRearrangedTransportTrainer
                     )
@@ -164,9 +194,6 @@ class ExperimentRunner:
                         rearranged_configs.RearrangedTransportTrainerConfig
                     )
 
-            trainer_data = config.rearrangement_trainer_config
-            if hasattr(trainer_data, "model_dump"):
-                trainer_data = trainer_data.model_dump()
             rearrangement_trainer_config = (
                 rearrangement_trainer_config_class.model_validate(trainer_data or {})
             )
@@ -201,7 +228,8 @@ class ExperimentRunner:
                     "The rearrangement stage must not retrain the base predictor."
                 )
             if (
-                rearrangement_config.type == "rearranged_transport"
+                rearrangement_config.type != "amortized_rearranged_transport"
+                and requested_rearrangement_trainer != "experimental_rearrangement"
                 and not math.isclose(
                     rearrangement_trainer_config.coverage_mass,
                     config.conformal_config.coverage_mass,
