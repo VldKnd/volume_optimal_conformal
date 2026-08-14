@@ -5,13 +5,13 @@ from configs.trainers.rearranged_transport.dense import (
     RearrangedTransportTrainerConfig,
     SupervisedRearrangedTransportTrainerConfig,
 )
-from configs.trainers.rearranged_transport.experimental_rearrangement import (
-    ExperimentalRearrangementTrainerConfig,
+from configs.trainers.rearranged_transport.experimental_amortized_rearrangement import (
+    ExperimentalAmortizedRearrangementTrainerConfig,
 )
 
 __all__ = [
     "AmortizedRearrangedTransportTrainerConfig",
-    "ExperimentalRearrangementTrainerConfig",
+    "ExperimentalAmortizedRearrangementTrainerConfig",
     "RearrangedTransportTrainerConfig",
     "SupervisedRearrangedTransportTrainerConfig",
 ]

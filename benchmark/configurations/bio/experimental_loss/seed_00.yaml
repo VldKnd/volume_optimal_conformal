@@ -38,7 +38,7 @@ trainer_config:
   verbose: true
 
 rearrangement_config:
-  type: rearranged_transport
+  type: amortized_rearranged_transport
   x_dim: 8
   y_dim: 2
   hidden_dimension: 256
@@ -56,8 +56,9 @@ rearrangement_config:
   dtype: float32
 
 rearrangement_trainer_config:
-  type: experimental_rearrangement
+  type: experimental_amortized_rearrangement
   epochs: 100
+  mc_samples_per_x: 32
   train_transport_map: false
   learning_rate: 0.001
   weight_decay: 0.0001
@@ -89,7 +90,7 @@ wandb:
   project: minimal-volume-conformal-prediction
   entity: null
   group: bio/experimental_loss
-  name: experimental_loss_seed_00
+  name: experimental_amortized_mean_log_seed_00
   tags:
     - bio
     - experimental_loss
@@ -97,6 +98,8 @@ wandb:
     - transport
     - l2
     - rearranged
+    - amortized
+    - mean-log
     - sparse
     - dopri5
   job_type: experimental_loss
