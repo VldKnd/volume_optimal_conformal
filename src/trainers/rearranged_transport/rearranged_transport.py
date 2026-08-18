@@ -26,6 +26,11 @@ class RearrangedTransportTrainer(BaseTrainer):
 
     config_class = RearrangedTransportTrainerConfig
     trainer_type = "rearranged_transport_trainer"
+    _progress_description = "Rearranged Transport"
+    _missing_dataloader_message = (
+        "dataloader must be provided to train rearranged transport."
+    )
+    _non_finite_loss_message = "Non-finite rearranged transport loss."
 
     def __init__(
         self,
@@ -41,9 +46,9 @@ class RearrangedTransportTrainer(BaseTrainer):
         max_epochs: int | None = None,
     ) -> RearrangedTransportPredictor:
         if dataloader is None:
-            raise ValueError(
-                "dataloader must be provided to train rearranged transport."
-            )
+            raise ValueError(self._missing_dataloader_message)
+
+        self._validate_fit_predictor(predictor)
 
         end_epoch = self._fit_end_epoch(max_epochs)
         if end_epoch <= self.completed_epochs:
@@ -75,7 +80,7 @@ class RearrangedTransportTrainer(BaseTrainer):
             self.completed_epochs,
             end_epoch,
             disable=not self.config.verbose,
-            desc="Rearranged Transport",
+            desc=self._progress_description,
         )
 
         for epoch in progress:
@@ -106,7 +111,7 @@ class RearrangedTransportTrainer(BaseTrainer):
                 repeated_coverage_masses = coverage_masses.repeat_interleave(
                     self.config.mc_samples_per_x,
                 )
-                repeated_radii = radii.repeat_interleave(self.config.mc_samples_per_x, )
+                repeated_radii = radii.repeat_interleave(self.config.mc_samples_per_x)
                 u = self._sample_training_points(
                     batch_size=x.shape[0],
                     dimension=predictor.y_dim,
@@ -116,16 +121,17 @@ class RearrangedTransportTrainer(BaseTrainer):
                     dtype=predictor.dtype,
                 )
 
-                training_losses = self.estimate_training_losses(
+                training_losses = self._estimate_sampled_coverage_training_losses(
                     predictor=predictor,
                     x=x,
                     u=u,
+                    coverage_masses=repeated_coverage_masses,
                     mc_samples_per_x=self.config.mc_samples_per_x,
                 )
                 loss = training_losses.mean()
 
                 if not torch.isfinite(loss):
-                    raise FloatingPointError("Non-finite rearranged transport loss.")
+                    raise FloatingPointError(self._non_finite_loss_message)
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -196,6 +202,28 @@ class RearrangedTransportTrainer(BaseTrainer):
         predictor.eval()
         return predictor
 
+    def _validate_fit_predictor(
+        self,
+        predictor: RearrangedTransportPredictor,
+    ) -> None:
+        pass
+
+    def _estimate_sampled_coverage_training_losses(
+        self,
+        predictor: RearrangedTransportPredictor,
+        x: torch.Tensor,
+        u: torch.Tensor,
+        coverage_masses: torch.Tensor,
+        mc_samples_per_x: int,
+    ) -> torch.Tensor:
+        del coverage_masses
+        return self.estimate_training_losses(
+            predictor=predictor,
+            x=x,
+            u=u,
+            mc_samples_per_x=mc_samples_per_x,
+        )
+
     def estimate_log_volume(
         self,
         predictor: RearrangedTransportPredictor,
@@ -250,19 +278,10 @@ class RearrangedTransportTrainer(BaseTrainer):
         weights: torch.Tensor,
         mc_samples_per_x: int,
     ) -> torch.Tensor:
-        if mc_samples_per_x < 1:
-            raise ValueError("mc_samples_per_x must be positive.")
-
-        if weights.ndim != 1:
-            weights = weights.reshape(-1)
-
-        if weights.numel() % mc_samples_per_x != 0:
-            raise ValueError(
-                "Number of log-det weights must be divisible by "
-                f"mc_samples_per_x={mc_samples_per_x}, got {weights.numel()}."
-            )
-
-        grouped_weights = weights.reshape(-1, mc_samples_per_x)
+        grouped_weights = self._group_weights(
+            weights=weights,
+            mc_samples_per_x=mc_samples_per_x,
+        )
         return (torch.logsumexp(grouped_weights, dim=1) - math.log(mc_samples_per_x))
 
     def _fit_transport_map_if_requested(
@@ -344,14 +363,11 @@ class RearrangedTransportTrainer(BaseTrainer):
         device: torch.device,
         dtype: torch.dtype,
     ) -> torch.Tensor:
-        directions = torch.randn(
-            batch_size,
-            dimension,
+        directions = self._sample_unit_directions(
+            batch_size=batch_size,
+            dimension=dimension,
             device=device,
             dtype=dtype,
-        )
-        directions = directions / directions.norm(dim=-1, keepdim=True).clamp_min(
-            torch.finfo(dtype).eps
         )
 
         conditional_masses = torch.rand(
@@ -367,7 +383,56 @@ class RearrangedTransportTrainer(BaseTrainer):
         return directions * sampled_radii.unsqueeze(-1)
 
     @staticmethod
+    def _sample_unit_directions(
+        batch_size: int,
+        dimension: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        directions = torch.randn(
+            batch_size,
+            dimension,
+            device=device,
+            dtype=dtype,
+        )
+        return directions / directions.norm(dim=-1, keepdim=True).clamp_min(
+            torch.finfo(dtype).eps
+        )
+
+    def _sample_uniform_ball(
+        self,
+        batch_size: int,
+        dimension: int,
+        radius: float,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        directions = self._sample_unit_directions(
+            batch_size=batch_size,
+            dimension=dimension,
+            device=device,
+            dtype=dtype,
+        )
+        radial = torch.rand(
+            batch_size,
+            1,
+            device=device,
+            dtype=dtype,
+        ).pow(1.0 / dimension)
+        return radius * radial * directions
+
     def _grouped_mean(
+        self,
+        weights: torch.Tensor,
+        mc_samples_per_x: int,
+    ) -> torch.Tensor:
+        return self._group_weights(
+            weights=weights,
+            mc_samples_per_x=mc_samples_per_x,
+        ).mean(dim=1)
+
+    @staticmethod
+    def _group_weights(
         weights: torch.Tensor,
         mc_samples_per_x: int,
     ) -> torch.Tensor:
@@ -381,41 +446,7 @@ class RearrangedTransportTrainer(BaseTrainer):
                 f"mc_samples_per_x={mc_samples_per_x}, got {weights.numel()}."
             )
 
-        return weights.reshape(-1, mc_samples_per_x).mean(dim=1)
-
-    def _sample_uniform_ball(
-        self,
-        batch_size: int,
-        dimension: int,
-        radius: float,
-        device: torch.device,
-        dtype: torch.dtype,
-    ) -> torch.Tensor:
-        direction = torch.randn(
-            batch_size,
-            dimension,
-            device=device,
-            dtype=dtype,
-        )
-        direction = direction / direction.norm(dim=-1, keepdim=True).clamp_min(
-            torch.finfo(dtype).eps
-        )
-
-        radial = torch.rand(
-            batch_size,
-            1,
-            device=device,
-            dtype=dtype,
-        ).pow(1.0 / dimension)
-
-        return radius * radial * direction
-
-    def _ball_radius(
-        self,
-        coverage_mass: float,
-        dimension: int,
-    ) -> float:
-        return float(chi.ppf(coverage_mass, df=dimension))
+        return weights.reshape(-1, mc_samples_per_x)
 
     @staticmethod
     def _rearrangement_flow_metrics(
@@ -485,6 +516,13 @@ class SupervisedRearrangedTransportTrainer(RearrangedTransportTrainer):
 
     config_class = SupervisedRearrangedTransportTrainerConfig
     trainer_type = "supervised_rearranged_transport_trainer"
+
+    @staticmethod
+    def _ball_radius(
+        coverage_mass: float,
+        dimension: int,
+    ) -> float:
+        return float(chi.ppf(coverage_mass, df=dimension))
 
     def fit(
         self,
