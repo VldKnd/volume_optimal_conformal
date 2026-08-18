@@ -139,9 +139,7 @@ class ExperimentRunner:
             if hasattr(trainer_data, "model_dump"):
                 trainer_data = trainer_data.model_dump()
             requested_rearrangement_trainer = (
-                trainer_data.get("type")
-                if isinstance(trainer_data, dict)
-                else None
+                trainer_data.get("type") if isinstance(trainer_data, dict) else None
             )
             if config.rearrangement_config.type == "amortized_rearranged_transport":
                 if requested_rearrangement_trainer is not None:
@@ -216,14 +214,16 @@ class ExperimentRunner:
                     "The rearrangement stage must not retrain the base predictor."
                 )
             if (
-                rearrangement_config.type != "amortized_rearranged_transport"
+                config.supervised_rearrangement
+                and rearrangement_config.type != "amortized_rearranged_transport"
                 and not math.isclose(
                     rearrangement_trainer_config.coverage_mass,
                     config.conformal_config.coverage_mass,
                 )
             ):
                 raise ValueError(
-                    "Fixed rearrangement and conformal coverage masses must match."
+                    "Supervised rearrangement and conformal coverage masses must "
+                    "match."
                 )
 
         residual_conformal = isinstance(

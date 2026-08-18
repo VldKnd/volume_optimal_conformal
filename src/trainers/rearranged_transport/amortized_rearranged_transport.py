@@ -3,7 +3,6 @@ from __future__ import annotations
 import time
 
 import torch
-from scipy.stats import chi
 from tqdm import trange
 
 from configs.trainers.rearranged_transport.amortized_rearranged_transport import (
@@ -122,9 +121,7 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
                 repeated_coverage_masses = coverage_masses.repeat_interleave(
                     self.config.mc_samples_per_x,
                 )
-                repeated_radii = radii.repeat_interleave(
-                    self.config.mc_samples_per_x,
-                )
+                repeated_radii = radii.repeat_interleave(self.config.mc_samples_per_x, )
                 u = self._sample_training_points(
                     batch_size=x.shape[0],
                     dimension=predictor.y_dim,
@@ -288,80 +285,3 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
             weights=weights,
             mc_samples_per_x=mc_samples_per_x,
         )
-
-    @staticmethod
-    def _sample_coverage_masses(
-        predictor: AmortizedRearrangedTransport,
-        batch_size: int,
-    ) -> torch.Tensor:
-        if batch_size < 1:
-            raise ValueError("batch_size must be positive.")
-        epsilon = torch.finfo(predictor.dtype).eps
-        return torch.empty(
-            batch_size,
-            device=predictor.device,
-            dtype=predictor.dtype,
-        ).uniform_(epsilon, 1.0 - epsilon)
-
-    @staticmethod
-    def _ball_radii(
-        coverage_masses: torch.Tensor,
-        dimension: int,
-    ) -> torch.Tensor:
-        radii = chi.ppf(
-            coverage_masses.detach().cpu().numpy(),
-            df=dimension,
-        )
-        return torch.as_tensor(
-            radii,
-            device=coverage_masses.device,
-            dtype=coverage_masses.dtype,
-        )
-
-    def _sample_training_points(
-        self,
-        batch_size: int,
-        dimension: int,
-        coverage_masses: torch.Tensor,
-        maximum_radii: torch.Tensor,
-        device: torch.device,
-        dtype: torch.dtype,
-    ) -> torch.Tensor:
-        directions = torch.randn(
-            batch_size,
-            dimension,
-            device=device,
-            dtype=dtype,
-        )
-        directions = directions / directions.norm(dim=-1, keepdim=True).clamp_min(
-            torch.finfo(dtype).eps
-        )
-
-        conditional_masses = torch.rand(
-            batch_size,
-            device=device,
-            dtype=dtype,
-        ) * coverage_masses
-        sampled_radii = self._ball_radii(
-            coverage_masses=conditional_masses,
-            dimension=dimension,
-        )
-        sampled_radii = torch.minimum(sampled_radii, maximum_radii)
-        return directions * sampled_radii.unsqueeze(-1)
-
-    @staticmethod
-    def _grouped_mean(
-        weights: torch.Tensor,
-        mc_samples_per_x: int,
-    ) -> torch.Tensor:
-        if mc_samples_per_x < 1:
-            raise ValueError("mc_samples_per_x must be positive.")
-
-        weights = weights.reshape(-1)
-        if weights.numel() % mc_samples_per_x != 0:
-            raise ValueError(
-                "Number of log-det weights must be divisible by "
-                f"mc_samples_per_x={mc_samples_per_x}, got {weights.numel()}."
-            )
-
-        return weights.reshape(-1, mc_samples_per_x).mean(dim=1)
