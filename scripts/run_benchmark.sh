@@ -15,7 +15,6 @@ fi
 
 SCRIPT_DIRECTORY=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 REPOSITORY_ROOT=$(cd -- "${SCRIPT_DIRECTORY}/.." && pwd -P)
-PYTHON_EXECUTABLE=${MVCP_PYTHON_EXECUTABLE:-${REPOSITORY_ROOT}/.venv/bin/python}
 CONFIGURATION_PATH=$1
 
 if [[ "$CONFIGURATION_PATH" != /* ]]; then
@@ -26,14 +25,25 @@ fi
     printf 'error: configuration path not found: %s\n' "$CONFIGURATION_PATH" >&2
     exit 2
 }
-[[ -x "$PYTHON_EXECUTABLE" ]] || {
-    printf "error: run 'uv sync --frozen --extra tracking' before submitting.\n" >&2
+if [[ -n "${MVCP_PYTHON_EXECUTABLE:-}" ]]; then
+    [[ -x "$MVCP_PYTHON_EXECUTABLE" ]] || {
+        printf 'error: Python executable not found: %s\n' \
+            "$MVCP_PYTHON_EXECUTABLE" >&2
+        exit 2
+    }
+    PYTHON_COMMAND=("$MVCP_PYTHON_EXECUTABLE")
+elif command -v uv >/dev/null 2>&1; then
+    PYTHON_COMMAND=(uv run python3)
+elif [[ -x "${REPOSITORY_ROOT}/.venv/bin/python" ]]; then
+    PYTHON_COMMAND=("${REPOSITORY_ROOT}/.venv/bin/python")
+else
+    printf "error: neither 'uv' nor the project Python is available.\n" >&2
     exit 2
-}
+fi
 
 cd "$REPOSITORY_ROOT"
 export PYTHONUNBUFFERED=1
-exec "$PYTHON_EXECUTABLE" \
+exec "${PYTHON_COMMAND[@]}" \
     "${SCRIPT_DIRECTORY}/run_benchmark.py" \
     "$CONFIGURATION_PATH" \
     --priority-method neural_ot_l2 \
