@@ -1,0 +1,63 @@
+name: seed_06
+seed: 6
+save_directory: benchmark/results/10_seeds/bio/rf_elliptic
+
+dataset_config:
+  type: bio
+  file_path: data/bio/CASP.csv
+  x_dim: 8
+  y_dim: 2
+  train_fraction: 0.6
+  calibration_fraction: 0.2
+  test_fraction: 0.2
+  seed: 6
+  device: cpu
+  dtype: float32
+
+predictor_config:
+  type: random_forest
+  x_dim: 8
+  y_dim: 2
+  n_estimators: 100
+  max_depth: null
+  seed: 6
+  device: cpu
+  dtype: float32
+
+trainer_config:
+  epochs: 1
+
+conformal_config:
+  type: residual
+  coverage_mass: 0.9
+  calibrator:
+    type: elliptic
+    n_neighbors: 100
+    regularization: 0.0001
+    local_weight: 0.8
+  volume_mc_samples: 1000
+  volume_n_neighbors: 100
+  volume_seed: 6
+
+train_batch_size: 4096
+calibration_batch_size: 512
+test_batch_size: 512
+compute_volume: true
+metrics_verbose: true
+
+wandb:
+  mode: online
+  project: minimal-volume-conformal-prediction
+  entity: null
+  group: 10_seeds/bio/rf_elliptic
+  name: rf_elliptic_seed_06
+  tags:
+    - bio
+    - 10_seeds
+    - final-benchmark
+    - random-forest
+    - residual
+    - rf-elliptic
+  job_type: rf_elliptic
+  log_every_n_steps: 20
+  log_solver_diagnostics: false

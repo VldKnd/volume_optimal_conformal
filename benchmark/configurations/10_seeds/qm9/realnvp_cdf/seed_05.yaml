@@ -1,0 +1,73 @@
+name: seed_05
+seed: 5
+save_directory: benchmark/results/10_seeds/qm9/realnvp_cdf
+
+dataset_config:
+  type: qm9
+  file_path: data/qm9/qm9_mbtr_100.npz
+  raw_root: data/qm9/pyg
+  x_dim: 100
+  y_dim: 4
+  train_fraction: 0.6
+  calibration_fraction: 0.2
+  test_fraction: 0.2
+  seed: 5
+  device: cuda
+  dtype: float32
+
+predictor_config:
+  type: normalizing_flow
+  x_dim: 100
+  y_dim: 4
+  hidden_dim: 64
+  num_hidden_layers: 4
+  num_flow_layers: 4
+  log_scale_bound: 3.0
+  seed: 5
+  device: cuda
+  dtype: float32
+predictor_checkpoint: benchmark/results/10_seeds/qm9/realnvp_l2/seed_05/base/predictor.pt
+
+trainer_config:
+  epochs: 250
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  grad_clip_norm: 10.0
+  use_cosine_scheduler: true
+  verbose: true
+
+conformal_config:
+  type: transport_based
+  coverage_mass: 0.9
+  calibrator:
+    type: cdf_calibrator
+    n_cdf_samples: 64
+    cdf_batch_size: 65536
+  volume_mc_samples: 1000
+  volume_batch_size: 1024
+  volume_n_neighbors: 100
+  volume_seed: 5
+
+train_batch_size: 4096
+calibration_batch_size: 512
+test_batch_size: 512
+compute_volume: true
+metrics_verbose: true
+
+wandb:
+  mode: online
+  project: minimal-volume-conformal-prediction
+  entity: null
+  group: 10_seeds/qm9/realnvp_cdf
+  name: realnvp_cdf_seed_05
+  tags:
+    - qm9
+    - 10_seeds
+    - final-benchmark
+    - transport
+    - normalizing-flow
+    - realnvp
+    - cdf
+  job_type: realnvp_cdf
+  log_every_n_steps: 20
+  log_solver_diagnostics: false

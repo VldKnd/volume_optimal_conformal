@@ -12,7 +12,10 @@ sys.path.insert(0, str(REPOSITORY_ROOT / "src"))
 from experimentation import ExperimentRunner, load_experiment_config
 
 
-def _discover_config_paths(target: Path) -> list[Path]:
+def _discover_config_paths(
+    target: Path,
+    priority_method_names: tuple[str, ...] = (),
+) -> list[Path]:
     """Resolve one YAML file or recursively discover YAMLs in a directory."""
     if target.is_file():
         if target.suffix.lower() not in {".yaml", ".yml"}:
@@ -24,9 +27,20 @@ def _discover_config_paths(target: Path) -> list[Path]:
     if not target.is_dir():
         raise FileNotFoundError(f"Configuration path does not exist: {target}")
 
+    priorities = {
+        method_name: index
+        for index, method_name in enumerate(priority_method_names)
+    }
+    default_priority = len(priorities)
     config_paths = sorted(
-        path for path in target.rglob("*")
-        if path.is_file() and path.suffix.lower() in {".yaml", ".yml"}
+        [
+            path for path in target.rglob("*")
+            if path.is_file() and path.suffix.lower() in {".yaml", ".yml"}
+        ],
+        key=lambda path: (
+            priorities.get(path.parent.name, default_priority),
+            str(path),
+        ),
     )
     if not config_paths:
         raise FileNotFoundError(f"No YAML configurations found in {target}.")
@@ -64,6 +78,16 @@ def main() -> None:
         "config_directory",
         type=Path,
         help="One YAML configuration or a directory searched recursively.",
+    )
+    parser.add_argument(
+        "--priority-method",
+        action="append",
+        default=[],
+        metavar="METHOD",
+        help=(
+            "Run configurations whose parent directory has this name before "
+            "other configurations; repeat to specify priority order."
+        ),
     )
     parser.add_argument(
         "--wandb-mode",
@@ -107,7 +131,10 @@ def main() -> None:
     if not config_directory.is_absolute():
         config_directory = REPOSITORY_ROOT / config_directory
 
-    config_paths = _discover_config_paths(config_directory)
+    config_paths = _discover_config_paths(
+        config_directory,
+        priority_method_names=tuple(args.priority_method),
+    )
 
     configs = [
         (

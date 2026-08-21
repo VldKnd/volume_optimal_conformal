@@ -1,0 +1,62 @@
+name: seed_01
+seed: 1
+save_directory: benchmark/results/10_seeds/scm20d/local_otcp
+
+dataset_config:
+  type: scm20d
+  file_path: data/scm20d/file1730492b4408.arff
+  x_dim: 61
+  y_dim: 16
+  train_fraction: 0.6
+  calibration_fraction: 0.2
+  test_fraction: 0.2
+  seed: 1
+  device: cpu
+  dtype: float32
+
+predictor_config:
+  type: random_forest
+  x_dim: 61
+  y_dim: 16
+  n_estimators: 100
+  max_depth: null
+  seed: 1
+  device: cpu
+  dtype: float32
+
+trainer_config:
+  epochs: 1
+
+conformal_config:
+  type: residual
+  coverage_mass: 0.9
+  calibrator:
+    type: local_otcp
+    n_neighbors: 100
+    seed: 1
+  volume_mc_samples: 1000
+  volume_n_neighbors: 100
+  volume_seed: 1
+
+train_batch_size: 256
+calibration_batch_size: 512
+test_batch_size: 512
+compute_volume: true
+metrics_verbose: true
+
+wandb:
+  mode: online
+  project: minimal-volume-conformal-prediction
+  entity: null
+  group: 10_seeds/scm20d/local_otcp
+  name: local_otcp_seed_01
+  tags:
+    - scm20d
+    - 10_seeds
+    - final-benchmark
+    - random-forest
+    - residual
+    - local-otcp
+  job_type: local_otcp
+  log_every_n_steps: 20
+  log_solver_diagnostics: false

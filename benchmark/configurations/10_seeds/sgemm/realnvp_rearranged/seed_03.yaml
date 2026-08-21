@@ -1,0 +1,106 @@
+name: seed_03
+seed: 3
+save_directory: benchmark/results/10_seeds/sgemm/realnvp_rearranged
+
+dataset_config:
+  type: sgemm
+  file_path: data/sgemm/sgemm_product.csv
+  x_dim: 14
+  y_dim: 4
+  train_fraction: 0.6
+  calibration_fraction: 0.2
+  test_fraction: 0.2
+  seed: 3
+  device: cuda
+  dtype: float32
+
+predictor_config:
+  type: normalizing_flow
+  x_dim: 14
+  y_dim: 4
+  hidden_dim: 64
+  num_hidden_layers: 4
+  num_flow_layers: 4
+  log_scale_bound: 3.0
+  seed: 3
+  device: cuda
+  dtype: float32
+predictor_checkpoint: benchmark/results/10_seeds/sgemm/realnvp_l2/seed_03/base/predictor.pt
+
+trainer_config:
+  epochs: 250
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  grad_clip_norm: 10.0
+  use_cosine_scheduler: true
+  verbose: true
+
+rearrangement_config:
+  type: rearranged_transport
+  x_dim: 14
+  y_dim: 4
+  hidden_dimension: 256
+  number_of_hidden_layers: 1
+  time_dependent: true
+  vector_field_implementation: sparse
+  activation: silu
+  use_adjoint: false
+  method: dopri5
+  rtol: 1.0e-05
+  atol: 1.0e-06
+  number_of_steps: null
+  seed: 3
+  device: cuda
+  dtype: float32
+
+rearrangement_trainer_config:
+  epochs: 100
+  mc_samples_per_x: 32
+  train_transport_map: false
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  grad_clip_norm: 1.0
+  use_cosine_scheduler: true
+  verbose: true
+
+supervised_rearrangement: false
+
+conformal_config:
+  type: transport_based
+  coverage_mass: 0.9
+  calibrator:
+    type: norm
+    p: 2.0
+  volume_mc_samples: 1000
+  volume_batch_size: 1024
+  volume_n_neighbors: 100
+  volume_seed: 3
+
+train_batch_size: 4096
+rearrangement_train_batch_size: 512
+calibration_batch_size: 512
+test_batch_size: 512
+compute_volume: true
+metrics_verbose: true
+
+wandb:
+  mode: online
+  project: minimal-volume-conformal-prediction
+  entity: null
+  group: 10_seeds/sgemm/realnvp_rearranged
+  name: realnvp_rearranged_seed_03
+  tags:
+    - sgemm
+    - 10_seeds
+    - final-benchmark
+    - transport
+    - normalizing-flow
+    - realnvp
+    - l2
+    - rearranged
+    - non-amortized
+    - sparse
+    - dopri5
+  job_type: realnvp_rearranged
+  log_every_n_steps: 20
+  log_solver_diagnostics: true

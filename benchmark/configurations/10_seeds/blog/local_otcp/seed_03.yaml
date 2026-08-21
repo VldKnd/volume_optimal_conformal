@@ -1,0 +1,62 @@
+name: seed_03
+seed: 3
+save_directory: benchmark/results/10_seeds/blog/local_otcp
+
+dataset_config:
+  type: blog
+  file_path: data/blog/blogData_train.csv
+  x_dim: 279
+  y_dim: 2
+  train_fraction: 0.6
+  calibration_fraction: 0.2
+  test_fraction: 0.2
+  seed: 3
+  device: cpu
+  dtype: float32
+
+predictor_config:
+  type: random_forest
+  x_dim: 279
+  y_dim: 2
+  n_estimators: 100
+  max_depth: null
+  seed: 3
+  device: cpu
+  dtype: float32
+
+trainer_config:
+  epochs: 1
+
+conformal_config:
+  type: residual
+  coverage_mass: 0.9
+  calibrator:
+    type: local_otcp
+    n_neighbors: 100
+    seed: 3
+  volume_mc_samples: 1000
+  volume_n_neighbors: 100
+  volume_seed: 3
+
+train_batch_size: 4096
+calibration_batch_size: 512
+test_batch_size: 512
+compute_volume: true
+metrics_verbose: true
+
+wandb:
+  mode: online
+  project: minimal-volume-conformal-prediction
+  entity: null
+  group: 10_seeds/blog/local_otcp
+  name: local_otcp_seed_03
+  tags:
+    - blog
+    - 10_seeds
+    - final-benchmark
+    - random-forest
+    - residual
+    - local-otcp
+  job_type: local_otcp
+  log_every_n_steps: 20
+  log_solver_diagnostics: false
