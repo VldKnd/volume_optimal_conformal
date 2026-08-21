@@ -13,12 +13,17 @@ if [[ $# -ne 1 ]]; then
     exit 2
 fi
 
-SCRIPT_DIRECTORY=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
-REPOSITORY_ROOT=$(cd -- "${SCRIPT_DIRECTORY}/.." && pwd -P)
+if [[ -n "${SLURM_SUBMIT_DIR:-}" ]]; then
+    REPOSITORY_ROOT=$(cd -- "$SLURM_SUBMIT_DIR" && pwd -P)
+else
+    SCRIPT_DIRECTORY=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+    REPOSITORY_ROOT=$(cd -- "${SCRIPT_DIRECTORY}/.." && pwd -P)
+fi
+SCRIPT_DIRECTORY="${REPOSITORY_ROOT}/scripts"
 CONFIGURATION_PATH=$1
 
 if [[ "$CONFIGURATION_PATH" != /* ]]; then
-    CONFIGURATION_PATH="${PWD}/${CONFIGURATION_PATH}"
+    CONFIGURATION_PATH="${SLURM_SUBMIT_DIR:-$PWD}/${CONFIGURATION_PATH}"
 fi
 
 [[ -e "$CONFIGURATION_PATH" ]] || {
