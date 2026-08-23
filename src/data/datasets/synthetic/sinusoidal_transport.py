@@ -12,14 +12,17 @@ from data.datasets.synthetic.base import BaseSyntheticDataset
 
 
 class SinusoidalTransportDataset(BaseSyntheticDataset):
-    """Unconditional 2D target from a triangular sinusoidal transport.
+    """Unconditional 2m-D target from pairwise sinusoidal transports.
 
-        U ~ N(0, I_2)
+        U ~ N(0, I_{2m})
         X = 0
 
-        Y_1 = U_1 / vertical_scale
-        Y_2 = vertical_scale * U_2
-              + amplitude * sin(frequency * U_1 + phase)
+    The same triangular map is applied independently to every consecutive
+    coordinate pair ``(U_{2j-1}, U_{2j})``:
+
+        Y_{2j-1} = U_{2j-1} / vertical_scale
+        Y_{2j} = vertical_scale * U_{2j}
+                 + amplitude * sin(frequency * U_{2j-1} + phase)
 
     The Jacobian is triangular:
 
@@ -95,7 +98,7 @@ class SinusoidalTransportDataset(BaseSyntheticDataset):
             n_samples: number of samples per x
 
         Returns:
-            y: (batch, n_samples, 2)
+            y: (batch, n_samples, y_dim)
         """
         if (
             isinstance(n_samples, bool) or not isinstance(n_samples, int)
@@ -130,25 +133,28 @@ class SinusoidalTransportDataset(BaseSyntheticDataset):
         Push latent U forward through the fixed triangular map.
 
         Args:
-            u: (..., 2)
+            u: (..., y_dim)
             x: (..., x_dim)
 
         Returns:
-            y: (..., 2)
+            y: (..., y_dim)
         """
         u = u.to(device=self.device, dtype=self.dtype)
         x = self._fixed_condition(x)
         self._validate_matching_shapes(point=u, x=x, point_name="u")
 
-        u1 = u[..., 0:1]
-        u2 = u[..., 1:2]
+        u_pairs = u.reshape(u.shape[:-1] + (self.y_dim // 2, 2))
+        u1 = u_pairs[..., 0:1]
+        u2 = u_pairs[..., 1:2]
 
         amplitude, vertical_scale, _ = self._transport_parameters(x)
+        amplitude = amplitude.unsqueeze(-2)
+        vertical_scale = vertical_scale.unsqueeze(-2)
         wave = amplitude * torch.sin(self.config.frequency * u1 + self.config.phase)
         y1 = u1 / vertical_scale
         y2 = vertical_scale * u2 + wave
 
-        return torch.cat([y1, y2], dim=-1)
+        return torch.cat([y1, y2], dim=-1).reshape(u.shape)
 
     def push_y_given_x(
         self,
@@ -159,25 +165,28 @@ class SinusoidalTransportDataset(BaseSyntheticDataset):
         Pull Y back to latent U using the exact triangular inverse.
 
         Args:
-            y: (..., 2)
+            y: (..., y_dim)
             x: (..., x_dim)
 
         Returns:
-            u: (..., 2)
+            u: (..., y_dim)
         """
         y = y.to(device=self.device, dtype=self.dtype)
         x = self._fixed_condition(x)
         self._validate_matching_shapes(point=y, x=x, point_name="y")
 
-        y1 = y[..., 0:1]
-        y2 = y[..., 1:2]
+        y_pairs = y.reshape(y.shape[:-1] + (self.y_dim // 2, 2))
+        y1 = y_pairs[..., 0:1]
+        y2 = y_pairs[..., 1:2]
 
         amplitude, vertical_scale, _ = self._transport_parameters(x)
+        amplitude = amplitude.unsqueeze(-2)
+        vertical_scale = vertical_scale.unsqueeze(-2)
         u1 = vertical_scale * y1
         wave = amplitude * torch.sin(self.config.frequency * u1 + self.config.phase)
         u2 = (y2 - wave) / vertical_scale
 
-        return torch.cat([u1, u2], dim=-1)
+        return torch.cat([u1, u2], dim=-1).reshape(y.shape)
 
     def log_det(
         self,

@@ -8,14 +8,16 @@ from configs.datasets.synthetic.banana_dataset import BananaDatasetConfig
 
 
 class BananaDataset(BaseSyntheticDataset):
-    """Synthetic banana-shaped distribution with a fixed dummy condition.
+    """Pairwise banana-shaped distribution with a fixed dummy condition.
 
         X = 2
 
-        U ~ N(0, I_2)
+        U ~ N(0, I_{2m})
 
-        Y_1 = 2 U_1
-        Y_2 = U_2 / 2 + U_1^2 + 8
+    For every consecutive coordinate pair ``(U_{2j-1}, U_{2j})``, apply
+
+        Y_{2j-1} = 2 U_{2j-1}
+        Y_{2j} = U_{2j} / 2 + U_{2j-1}^2 + 8
 
     The one-dimensional ``x`` tensor is retained for compatibility with the
     conditional modeling pipeline, but the target distribution is independent
@@ -72,7 +74,7 @@ class BananaDataset(BaseSyntheticDataset):
             n_samples: number of conditional samples per x
 
         Returns:
-            y: (batch, n_samples, 2)
+            y: (batch, n_samples, y_dim)
         """
         if (
             isinstance(n_samples, bool) or not isinstance(n_samples, int)
@@ -86,17 +88,17 @@ class BananaDataset(BaseSyntheticDataset):
         u = torch.randn(
             batch_size,
             n_samples,
-            2,
+            self.y_dim,
             generator=self._generator,
             dtype=self.dtype,
         ).to(self.device)
 
-        x_expanded = x[:, None, :]  # (batch, 1, 1)
-
-        y1 = u[..., 0:1] * x_expanded
-        y2 = (u[..., 1:2] / x_expanded + u[..., 0:1].square() + x_expanded.pow(3))
-
-        return torch.cat([y1, y2], dim=-1)
+        x_expanded = x[:, None, :].expand(
+            batch_size,
+            n_samples,
+            self.x_dim,
+        )
+        return self.push_u_given_x(u=u, x=x_expanded)
 
     def sample_joint(self, n: int) -> tuple[torch.Tensor, torch.Tensor]:
         x = self.sample_x(n)
@@ -112,11 +114,11 @@ class BananaDataset(BaseSyntheticDataset):
         Pull Y back to latent U given X.
 
         Args:
-            y: (batch, 2)
+            y: (..., y_dim)
             x: (batch, 1)
 
         Returns:
-            u: (batch, 2)
+            u: (..., y_dim)
         """
         x = self._fixed_condition(x)
         y = y.to(device=self.device, dtype=self.dtype)
@@ -127,18 +129,14 @@ class BananaDataset(BaseSyntheticDataset):
                 f"{y.shape[:-1]} and {x.shape[:-1]}."
             )
 
-        if y.shape[-1] != 2:
-            raise ValueError(f"Expected y.shape[-1] = 2, got {y.shape[-1]}.")
+        if y.shape[-1] != self.y_dim:
+            raise ValueError(f"Expected y.shape[-1] = {self.y_dim}, got {y.shape[-1]}.")
 
-        y_flat = y.reshape(-1, 2)
-        x_flat = x.reshape(-1, 1)
-
-        u1 = y_flat[:, 0:1] / x_flat
-        u2 = (y_flat[:, 1:2] - u1.square() - x_flat.pow(3)) * x_flat
-
-        u = torch.cat([u1, u2], dim=-1)
-
-        return u.reshape(y.shape[:-1] + (2, ))
+        y_pairs = y.reshape(y.shape[:-1] + (self.y_dim // 2, 2))
+        pair_condition = x.unsqueeze(-2)
+        u1 = y_pairs[..., 0:1] / pair_condition
+        u2 = (y_pairs[..., 1:2] - u1.square() - pair_condition.pow(3)) * pair_condition
+        return torch.cat([u1, u2], dim=-1).reshape(y.shape)
 
     def push_u_given_x(
         self,
@@ -149,11 +147,11 @@ class BananaDataset(BaseSyntheticDataset):
         Push latent U forward to Y given X.
 
         Args:
-            u: (..., 2)
+            u: (..., y_dim)
             x: (..., 1)
 
         Returns:
-            y: (..., 2)
+            y: (..., y_dim)
         """
         x = self._fixed_condition(x)
         u = u.to(device=self.device, dtype=self.dtype)
@@ -164,20 +162,22 @@ class BananaDataset(BaseSyntheticDataset):
                 f"{u.shape[:-1]} and {x.shape[:-1]}."
             )
 
-        if u.shape[-1] != 2:
-            raise ValueError(f"Expected u.shape[-1] = 2, got {u.shape[-1]}.")
+        if u.shape[-1] != self.y_dim:
+            raise ValueError(f"Expected u.shape[-1] = {self.y_dim}, got {u.shape[-1]}.")
 
-        y1 = u[..., 0:1] * x
-        y2 = u[..., 1:2] / x + u[..., 0:1].square() + x.pow(3)
-
-        return torch.cat([y1, y2], dim=-1)
+        u_pairs = u.reshape(u.shape[:-1] + (self.y_dim // 2, 2))
+        pair_condition = x.unsqueeze(-2)
+        u1 = u_pairs[..., 0:1]
+        y1 = u1 * pair_condition
+        y2 = (u_pairs[..., 1:2] / pair_condition + u1.square() + pair_condition.pow(3))
+        return torch.cat([y1, y2], dim=-1).reshape(u.shape)
 
     def log_det(
         self,
         x: torch.Tensor,
         u: torch.Tensor,
     ) -> torch.Tensor:
-        """Return the identically zero ``log |det D_u T(u)|``."""
+        """Return the zero log-determinant of the pairwise transport."""
         x = self._fixed_condition(x)
         u = u.to(device=self.device, dtype=self.dtype)
 
@@ -199,7 +199,7 @@ class BananaDataset(BaseSyntheticDataset):
         """
         Compute log p(y | x) by change of variables.
 
-        The map u -> y has Jacobian determinant 1 / x^2? Actually:
+        Each two-dimensional block has Jacobian determinant one:
 
             y1 = x u1
             y2 = u2 / x + u1^2 + x^3
@@ -211,7 +211,8 @@ class BananaDataset(BaseSyntheticDataset):
 
         det = 1.
 
-        Therefore ``log_det(x, u) = 0`` and ``log p(y | x) = log phi(u)``.
+        The full block-diagonal Jacobian also has determinant one, so
+        ``log_det(x, u) = 0`` and ``log p(y | x) = log phi(u)``.
         """
         u = self.push_y_given_x(y=y, x=x)
         return -0.5 * (

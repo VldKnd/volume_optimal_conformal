@@ -12,10 +12,11 @@ from data.datasets.synthetic.base import BaseSyntheticDataset
 
 
 class StarShapedGaussianDataset(BaseSyntheticDataset):
-    """Push a standard 2D Gaussian through an area-preserving star map.
+    """Push a standard 2m-D Gaussian through pairwise star maps.
 
-    For ``U ~ N(0, I_2)``, write its polar coordinates as ``(r, theta)``.
-    Let ``phi`` be the target angle, ``a`` denote ``petal_amplitude``, and
+    For each consecutive coordinate pair of ``U ~ N(0, I_{2m})``, write its
+    polar coordinates as ``(r, theta)``. Let ``phi`` be the target angle,
+    ``a`` denote ``petal_amplitude``, and
 
     ``c = sqrt(1 + a^2 / 2)``,
 
@@ -30,7 +31,9 @@ class StarShapedGaussianDataset(BaseSyntheticDataset):
 
     ``(r' / r) * (d r' / d r) * (d phi / d theta) = 1``.
 
-    The image of every centered circle has the classic polar-star boundary
+    The same map is applied independently to all ``m`` pairs. The resulting
+    block-diagonal transport remains volume preserving. The image of every
+    centered circle within a pair has the classic polar-star boundary
     ``R(phi)``. Its three valleys are strictly concave for ``a > 0.1``. A
     one-dimensional zero condition is retained only for compatibility with
     the conditional pipeline.
@@ -128,12 +131,14 @@ class StarShapedGaussianDataset(BaseSyntheticDataset):
         x = self._fixed_condition(x)
         self._validate_matching_shapes(point=u, x=x, point_name="u")
 
-        radius = torch.linalg.vector_norm(u, dim=-1, keepdim=True)
-        source_angle = torch.atan2(u[..., 1:2], u[..., 0:1])
+        u_pairs = u.reshape(u.shape[:-1] + (self.y_dim // 2, 2))
+        radius = torch.linalg.vector_norm(u_pairs, dim=-1, keepdim=True)
+        source_angle = torch.atan2(u_pairs[..., 1:2], u_pairs[..., 0:1])
         target_angle = self._target_angle(source_angle)
         target_radius = radius * self._radial_factor(target_angle)
 
-        return self._from_polar(radius=target_radius, angle=target_angle)
+        y_pairs = self._from_polar(radius=target_radius, angle=target_angle)
+        return y_pairs.reshape(u.shape)
 
     def push_y_given_x(
         self,
@@ -145,19 +150,28 @@ class StarShapedGaussianDataset(BaseSyntheticDataset):
         x = self._fixed_condition(x)
         self._validate_matching_shapes(point=y, x=x, point_name="y")
 
-        target_radius = torch.linalg.vector_norm(y, dim=-1, keepdim=True)
-        target_angle = torch.atan2(y[..., 1:2], y[..., 0:1])
+        y_pairs = y.reshape(y.shape[:-1] + (self.y_dim // 2, 2))
+        target_radius = torch.linalg.vector_norm(
+            y_pairs,
+            dim=-1,
+            keepdim=True,
+        )
+        target_angle = torch.atan2(
+            y_pairs[..., 1:2],
+            y_pairs[..., 0:1],
+        )
         source_angle = self._source_angle(target_angle)
         source_radius = target_radius / self._radial_factor(target_angle)
 
-        return self._from_polar(radius=source_radius, angle=source_angle)
+        u_pairs = self._from_polar(radius=source_radius, angle=source_angle)
+        return u_pairs.reshape(y.shape)
 
     def log_det(
         self,
         x: torch.Tensor,
         u: torch.Tensor,
     ) -> torch.Tensor:
-        """Return the identically zero ``log |det D_u T(u)|``."""
+        """Return the zero log-determinant of the pairwise transport."""
         x = self._fixed_condition(x)
         u = u.to(device=self.device, dtype=self.dtype)
         self._validate_matching_shapes(point=u, x=x, point_name="u")

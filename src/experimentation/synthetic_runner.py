@@ -33,9 +33,10 @@ def validate_synthetic_experiment_config(config: Any) -> None:
             "Synthetic benchmark dataset must be one of "
             f"{{{supported}}}, got {dataset_type!r}."
         )
-    if dataset_config.y_dim != 2:
+    if dataset_config.y_dim < 2 or dataset_config.y_dim % 2 != 0:
         raise ValueError(
-            "The analytic synthetic HDR metric requires y_dim=2, got "
+            "The pairwise synthetic HDR metric requires a positive even "
+            "y_dim, got "
             f"{dataset_config.y_dim}."
         )
     if config.predictor_config.type == "random_forest":
@@ -57,17 +58,23 @@ def compute_hdr_volume_ratio(
 ) -> dict[str, Any]:
     """Compare the analytic HDR volume with ``Vol(T(B(0, r)))``.
 
-    The supported datasets are two-dimensional pushforwards of a standard
-    Gaussian by a unit-determinant ground-truth map. Their probability-mass
-    ``coverage_mass`` HDR therefore has the same volume as the Gaussian ball
-    with squared radius equal to the corresponding Chi-square(2) quantile.
-    The learned transport volume is estimated by Monte Carlo integration of
-    its forward Jacobian over that same latent ball.
+    The supported datasets are even-dimensional pushforwards of a standard
+    Gaussian by pairwise unit-determinant ground-truth maps. Their
+    probability-mass ``coverage_mass`` HDR therefore has the same volume as
+    the Gaussian ball whose squared radius is the corresponding chi-square
+    quantile. The learned transport volume is estimated by Monte Carlo
+    integration of its forward Jacobian over that same latent ball.
     """
     if not 0.0 < coverage_mass < 1.0:
         raise ValueError("coverage_mass must be in (0, 1).")
-    if getattr(predictor, "y_dim", None) != 2:
-        raise ValueError("The analytic synthetic HDR metric requires y_dim=2.")
+    dimension = getattr(predictor, "y_dim", None)
+    if (
+        isinstance(dimension, bool) or not isinstance(dimension, int) or dimension < 2
+        or dimension % 2 != 0
+    ):
+        raise ValueError(
+            "The pairwise synthetic HDR metric requires a positive even y_dim."
+        )
     if not isinstance(condition, torch.Tensor):
         raise TypeError("condition must be a torch.Tensor.")
     expected_shape = (1, getattr(predictor, "x_dim", None))
@@ -77,12 +84,15 @@ def compute_hdr_volume_ratio(
             f"{tuple(condition.shape)}."
         )
 
-    radius_squared = float(chi2.ppf(coverage_mass, df=2))
+    radius_squared = float(chi2.ppf(coverage_mass, df=dimension))
     if not math.isfinite(radius_squared) or radius_squared <= 0.0:
         raise RuntimeError("The Gaussian HDR Chi-square quantile is invalid.")
     radius = math.sqrt(radius_squared)
-    hdr_volume = math.pi * radius_squared
-    log_hdr_volume = math.log(hdr_volume)
+    log_hdr_volume = (
+        0.5 * dimension * math.log(math.pi) + dimension * math.log(radius) -
+        math.lgamma(0.5 * dimension + 1.0)
+    )
+    hdr_volume = math.exp(log_hdr_volume)
 
     analytic_region = TransportBasedConformalPredictor(
         predictor=predictor,

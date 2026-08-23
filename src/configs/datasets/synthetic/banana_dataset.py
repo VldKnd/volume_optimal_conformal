@@ -16,7 +16,7 @@ class BananaDatasetConfig(BaseModel):
 
     # A fixed one-dimensional dummy condition preserves the conditional APIs.
     x_dim: Literal[1] = 1
-    y_dim: Literal[2] = 2
+    y_dim: int = Field(default=2, gt=0, multiple_of=2)
 
     seed: int = 31337
     device: str = "cpu"

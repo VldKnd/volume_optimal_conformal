@@ -15,7 +15,7 @@ class SinusoidalTransportDatasetConfig(BaseModel):
     n_test: int = Field(default=2_000, ge=0)
 
     x_dim: Literal[1] = 1
-    y_dim: Literal[2] = 2
+    y_dim: int = Field(default=2, gt=0, multiple_of=2)
     # Compatibility fields are fixed at zero and cannot restore conditioning.
     x_low: Literal[0.0] = 0.0
     x_high: Literal[0.0] = 0.0
