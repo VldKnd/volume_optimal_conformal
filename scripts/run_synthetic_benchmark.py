@@ -44,6 +44,16 @@ def main() -> None:
         help="One YAML configuration or a directory searched recursively.",
     )
     parser.add_argument(
+        "--priority-method",
+        action="append",
+        default=[],
+        metavar="METHOD",
+        help=(
+            "Run configurations whose parent directory has this name before "
+            "other configurations; repeat to specify priority order."
+        ),
+    )
+    parser.add_argument(
         "--wandb-mode",
         choices=("disabled", "offline", "online"),
         default=None,
@@ -60,7 +70,10 @@ def main() -> None:
     if not config_directory.is_absolute():
         config_directory = REPOSITORY_ROOT / config_directory
 
-    config_paths = _discover_config_paths(config_directory)
+    config_paths = _discover_config_paths(
+        config_directory,
+        priority_method_names=tuple(args.priority_method),
+    )
     configs = [
         (
             config_path,
