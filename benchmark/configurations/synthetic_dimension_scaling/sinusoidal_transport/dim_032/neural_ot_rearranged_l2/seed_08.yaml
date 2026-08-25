@@ -53,7 +53,7 @@ rearrangement_config:
   time_dependent: true
   vector_field_implementation: sparse
   activation: silu
-  use_adjoint: false
+  use_adjoint: true
   method: dopri5
   rtol: 1.0e-05
   atol: 1.0e-06
