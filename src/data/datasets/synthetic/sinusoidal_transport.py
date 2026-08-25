@@ -12,17 +12,17 @@ from data.datasets.synthetic.base import BaseSyntheticDataset
 
 
 class SinusoidalTransportDataset(BaseSyntheticDataset):
-    """Unconditional 2m-D target from pairwise sinusoidal transports.
+    """Sinusoidal first pair with an identity Gaussian tail.
 
-        U ~ N(0, I_{2m})
+        U ~ N(0, I_d)
         X = 0
 
-    The same triangular map is applied independently to every consecutive
-    coordinate pair ``(U_{2j-1}, U_{2j})``:
+    The triangular map is applied only to the first two coordinates:
 
-        Y_{2j-1} = U_{2j-1} / vertical_scale
-        Y_{2j} = vertical_scale * U_{2j}
-                 + amplitude * sin(frequency * U_{2j-1} + phase)
+        Y_0 = U_0 / vertical_scale
+        Y_1 = vertical_scale * U_1
+              + amplitude * sin(frequency * U_0 + phase)
+        Y_j = U_j,  j >= 2
 
     The Jacobian is triangular:
 
@@ -143,18 +143,15 @@ class SinusoidalTransportDataset(BaseSyntheticDataset):
         x = self._fixed_condition(x)
         self._validate_matching_shapes(point=u, x=x, point_name="u")
 
-        u_pairs = u.reshape(u.shape[:-1] + (self.y_dim // 2, 2))
-        u1 = u_pairs[..., 0:1]
-        u2 = u_pairs[..., 1:2]
+        u1 = u[..., 0:1]
+        u2 = u[..., 1:2]
 
         amplitude, vertical_scale, _ = self._transport_parameters(x)
-        amplitude = amplitude.unsqueeze(-2)
-        vertical_scale = vertical_scale.unsqueeze(-2)
         wave = amplitude * torch.sin(self.config.frequency * u1 + self.config.phase)
         y1 = u1 / vertical_scale
         y2 = vertical_scale * u2 + wave
 
-        return torch.cat([y1, y2], dim=-1).reshape(u.shape)
+        return torch.cat([y1, y2, u[..., 2:]], dim=-1)
 
     def push_y_given_x(
         self,
@@ -175,18 +172,15 @@ class SinusoidalTransportDataset(BaseSyntheticDataset):
         x = self._fixed_condition(x)
         self._validate_matching_shapes(point=y, x=x, point_name="y")
 
-        y_pairs = y.reshape(y.shape[:-1] + (self.y_dim // 2, 2))
-        y1 = y_pairs[..., 0:1]
-        y2 = y_pairs[..., 1:2]
+        y1 = y[..., 0:1]
+        y2 = y[..., 1:2]
 
         amplitude, vertical_scale, _ = self._transport_parameters(x)
-        amplitude = amplitude.unsqueeze(-2)
-        vertical_scale = vertical_scale.unsqueeze(-2)
         u1 = vertical_scale * y1
         wave = amplitude * torch.sin(self.config.frequency * u1 + self.config.phase)
         u2 = (y2 - wave) / vertical_scale
 
-        return torch.cat([u1, u2], dim=-1).reshape(y.shape)
+        return torch.cat([u1, u2, y[..., 2:]], dim=-1)
 
     def log_det(
         self,

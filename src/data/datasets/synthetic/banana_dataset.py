@@ -8,16 +8,17 @@ from configs.datasets.synthetic.banana_dataset import BananaDatasetConfig
 
 
 class BananaDataset(BaseSyntheticDataset):
-    """Pairwise banana-shaped distribution with a fixed dummy condition.
+    """Banana-shaped first pair with an identity Gaussian tail.
 
         X = 2
 
-        U ~ N(0, I_{2m})
+        U ~ N(0, I_d)
 
-    For every consecutive coordinate pair ``(U_{2j-1}, U_{2j})``, apply
+    Apply the nonlinear map only to the first two coordinates:
 
-        Y_{2j-1} = 2 U_{2j-1}
-        Y_{2j} = U_{2j} / 2 + U_{2j-1}^2 + 8
+        Y_0 = 2 U_0
+        Y_1 = U_1 / 2 + U_0^2 + 8
+        Y_j = U_j,  j >= 2
 
     The one-dimensional ``x`` tensor is retained for compatibility with the
     conditional modeling pipeline, but the target distribution is independent
@@ -132,11 +133,9 @@ class BananaDataset(BaseSyntheticDataset):
         if y.shape[-1] != self.y_dim:
             raise ValueError(f"Expected y.shape[-1] = {self.y_dim}, got {y.shape[-1]}.")
 
-        y_pairs = y.reshape(y.shape[:-1] + (self.y_dim // 2, 2))
-        pair_condition = x.unsqueeze(-2)
-        u1 = y_pairs[..., 0:1] / pair_condition
-        u2 = (y_pairs[..., 1:2] - u1.square() - pair_condition.pow(3)) * pair_condition
-        return torch.cat([u1, u2], dim=-1).reshape(y.shape)
+        u1 = y[..., 0:1] / x
+        u2 = (y[..., 1:2] - u1.square() - x.pow(3)) * x
+        return torch.cat([u1, u2, y[..., 2:]], dim=-1)
 
     def push_u_given_x(
         self,
@@ -165,19 +164,17 @@ class BananaDataset(BaseSyntheticDataset):
         if u.shape[-1] != self.y_dim:
             raise ValueError(f"Expected u.shape[-1] = {self.y_dim}, got {u.shape[-1]}.")
 
-        u_pairs = u.reshape(u.shape[:-1] + (self.y_dim // 2, 2))
-        pair_condition = x.unsqueeze(-2)
-        u1 = u_pairs[..., 0:1]
-        y1 = u1 * pair_condition
-        y2 = (u_pairs[..., 1:2] / pair_condition + u1.square() + pair_condition.pow(3))
-        return torch.cat([y1, y2], dim=-1).reshape(u.shape)
+        u1 = u[..., 0:1]
+        y1 = u1 * x
+        y2 = u[..., 1:2] / x + u1.square() + x.pow(3)
+        return torch.cat([y1, y2, u[..., 2:]], dim=-1)
 
     def log_det(
         self,
         x: torch.Tensor,
         u: torch.Tensor,
     ) -> torch.Tensor:
-        """Return the zero log-determinant of the pairwise transport."""
+        """Return the zero log-determinant of the transport."""
         x = self._fixed_condition(x)
         u = u.to(device=self.device, dtype=self.dtype)
 
@@ -199,7 +196,7 @@ class BananaDataset(BaseSyntheticDataset):
         """
         Compute log p(y | x) by change of variables.
 
-        Each two-dimensional block has Jacobian determinant one:
+        The transformed two-dimensional block has Jacobian determinant one:
 
             y1 = x u1
             y2 = u2 / x + u1^2 + x^3
@@ -211,7 +208,8 @@ class BananaDataset(BaseSyntheticDataset):
 
         det = 1.
 
-        The full block-diagonal Jacobian also has determinant one, so
+        The remaining coordinates form an identity block. The full Jacobian
+        therefore also has determinant one, so
         ``log_det(x, u) = 0`` and ``log p(y | x) = log phi(u)``.
         """
         u = self.push_y_given_x(y=y, x=x)

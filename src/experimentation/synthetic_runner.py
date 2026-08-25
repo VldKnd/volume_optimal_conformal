@@ -33,10 +33,9 @@ def validate_synthetic_experiment_config(config: Any) -> None:
             "Synthetic benchmark dataset must be one of "
             f"{{{supported}}}, got {dataset_type!r}."
         )
-    if dataset_config.y_dim < 2 or dataset_config.y_dim % 2 != 0:
+    if dataset_config.y_dim < 2:
         raise ValueError(
-            "The pairwise synthetic HDR metric requires a positive even "
-            "y_dim, got "
+            "The synthetic HDR metric requires y_dim >= 2, got "
             f"{dataset_config.y_dim}."
         )
     if config.predictor_config.type == "random_forest":
@@ -58,8 +57,9 @@ def compute_hdr_volume_ratio(
 ) -> dict[str, Any]:
     """Compare the analytic HDR volume with ``Vol(T(B(0, r)))``.
 
-    The supported datasets are even-dimensional pushforwards of a standard
-    Gaussian by pairwise unit-determinant ground-truth maps. Their
+    The supported datasets are pushforwards of a standard Gaussian by a
+    unit-determinant map on the first two coordinates and the identity map on
+    all remaining coordinates. Their
     probability-mass ``coverage_mass`` HDR therefore has the same volume as
     the Gaussian ball whose squared radius is the corresponding chi-square
     quantile. The learned transport volume is estimated by Monte Carlo
@@ -70,11 +70,8 @@ def compute_hdr_volume_ratio(
     dimension = getattr(predictor, "y_dim", None)
     if (
         isinstance(dimension, bool) or not isinstance(dimension, int) or dimension < 2
-        or dimension % 2 != 0
     ):
-        raise ValueError(
-            "The pairwise synthetic HDR metric requires a positive even y_dim."
-        )
+        raise ValueError("The synthetic HDR metric requires y_dim >= 2.")
     if not isinstance(condition, torch.Tensor):
         raise TypeError("condition must be a torch.Tensor.")
     expected_shape = (1, getattr(predictor, "x_dim", None))
