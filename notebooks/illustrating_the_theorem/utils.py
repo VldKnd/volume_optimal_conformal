@@ -703,187 +703,6 @@ def _squared_euclidean_cost_block(
     ).clamp_min(0.0)
 
 
-def _solve_discrete_sinkhorn_ot_torch(
-    source_points: torch.Tensor,
-    target_points: torch.Tensor,
-    epsilon: float,
-    *,
-    maximum_iterations: int,
-    tolerance: float,
-    batch_size: int,
-    verbose: bool,
-    compute_device: torch.device,
-    compute_backend: str,
-) -> SinkhornOTResult:
-    """Run blockwise log-domain Sinkhorn with Torch on ``compute_device``."""
-    source_compute = source_points.detach().to(
-        device=compute_device,
-        dtype=torch.float64,
-    )
-    target_compute = target_points.detach().to(
-        device=compute_device,
-        dtype=torch.float64,
-    )
-    number_of_points = source_compute.shape[0]
-    log_uniform_weight = -math.log(number_of_points)
-    uniform_weight = 1.0 / number_of_points
-    source_log_scaling = torch.zeros(
-        number_of_points,
-        device=compute_device,
-        dtype=torch.float64,
-    )
-    target_log_scaling = torch.zeros_like(source_log_scaling)
-
-    number_of_iterations = 0
-    for iteration in range(maximum_iterations):
-        source_updates = []
-        for start in range(0, number_of_points, batch_size):
-            stop = min(start + batch_size, number_of_points)
-            cost_block = _squared_euclidean_cost_block(
-                source_compute[start:stop],
-                target_compute,
-            )
-            source_updates.append(
-                log_uniform_weight - torch.logsumexp(
-                    target_log_scaling.unsqueeze(0) - cost_block / epsilon,
-                    dim=1,
-                )
-            )
-        source_log_scaling = torch.cat(source_updates)
-
-        target_updates = []
-        for start in range(0, number_of_points, batch_size):
-            stop = min(start + batch_size, number_of_points)
-            cost_block = _squared_euclidean_cost_block(
-                source_compute,
-                target_compute[start:stop],
-            )
-            target_updates.append(
-                log_uniform_weight - torch.logsumexp(
-                    source_log_scaling.unsqueeze(1) - cost_block / epsilon,
-                    dim=0,
-                )
-            )
-        target_log_scaling = torch.cat(target_updates)
-        number_of_iterations = iteration + 1
-
-        should_check = (
-            number_of_iterations % 10 == 0
-            or number_of_iterations == maximum_iterations
-        )
-        if should_check:
-            source_marginal_l1_error = torch.zeros(
-                (),
-                device=compute_device,
-                dtype=torch.float64,
-            )
-            for start in range(0, number_of_points, batch_size):
-                stop = min(start + batch_size, number_of_points)
-                cost_block = _squared_euclidean_cost_block(
-                    source_compute[start:stop],
-                    target_compute,
-                )
-                log_plan_block = (
-                    source_log_scaling[start:stop].unsqueeze(1)
-                    + target_log_scaling.unsqueeze(0)
-                    - cost_block / epsilon
-                )
-                row_masses = torch.exp(log_plan_block).sum(dim=1)
-                source_marginal_l1_error += (
-                    row_masses - uniform_weight
-                ).abs().sum()
-            current_error = float(source_marginal_l1_error)
-            if verbose and number_of_iterations % 100 == 0:
-                print(
-                    "Error in marginal at iteration "
-                    f"{number_of_iterations} = {current_error}"
-                )
-            if current_error <= tolerance:
-                break
-
-    transported_source_compute = torch.empty_like(source_compute)
-    source_marginals_compute = torch.empty(
-        number_of_points,
-        device=compute_device,
-        dtype=torch.float64,
-    )
-    target_marginals_compute = torch.zeros_like(source_marginals_compute)
-    transport_cost_compute = torch.zeros(
-        (),
-        device=compute_device,
-        dtype=torch.float64,
-    )
-    entropy_compute = torch.zeros_like(transport_cost_compute)
-    for start in range(0, number_of_points, batch_size):
-        stop = min(start + batch_size, number_of_points)
-        cost_block = _squared_euclidean_cost_block(
-            source_compute[start:stop],
-            target_compute,
-        )
-        log_plan_block = (
-            source_log_scaling[start:stop].unsqueeze(1)
-            + target_log_scaling.unsqueeze(0)
-            - cost_block / epsilon
-        )
-        plan_block = torch.exp(log_plan_block)
-        row_masses = plan_block.sum(dim=1)
-        if bool((row_masses <= 0.0).any()):
-            raise RuntimeError("Torch returned a zero-mass Sinkhorn source row.")
-        source_marginals_compute[start:stop] = row_masses
-        target_marginals_compute += plan_block.sum(dim=0)
-        transported_source_compute[start:stop] = (
-            plan_block @ target_compute
-        ) / row_masses.unsqueeze(1)
-        transport_cost_compute += (plan_block * cost_block).sum()
-        entropy_compute += (plan_block * log_plan_block).sum()
-
-    regularized_cost_compute = (
-        transport_cost_compute + epsilon * entropy_compute
-    )
-    if not bool(torch.isfinite(transported_source_compute).all()) or not bool(
-        torch.isfinite(regularized_cost_compute)
-    ):
-        raise RuntimeError("Torch returned non-finite Sinkhorn outputs.")
-
-    max_source_marginal_error = float(
-        (source_marginals_compute - uniform_weight).abs().max()
-    )
-    max_target_marginal_error = float(
-        (target_marginals_compute - uniform_weight).abs().max()
-    )
-    final_error = max(
-        max_source_marginal_error,
-        max_target_marginal_error,
-    )
-    converged = math.isfinite(final_error) and final_error <= tolerance
-    return SinkhornOTResult(
-        source_points=source_points.detach(),
-        target_points=target_points.detach(),
-        transported_source_points=transported_source_compute.to(
-            device=source_points.device,
-            dtype=source_points.dtype,
-        ),
-        transport_cost=float(transport_cost_compute),
-        regularized_transport_cost=float(regularized_cost_compute),
-        regularization=epsilon,
-        source_marginals=source_marginals_compute.to(
-            device=source_points.device,
-            dtype=source_points.dtype,
-        ),
-        target_marginals=target_marginals_compute.to(
-            device=target_points.device,
-            dtype=target_points.dtype,
-        ),
-        max_source_marginal_error=max_source_marginal_error,
-        max_target_marginal_error=max_target_marginal_error,
-        number_of_iterations=number_of_iterations,
-        final_error=final_error,
-        converged=converged,
-        compute_backend=compute_backend,
-        compute_device=str(compute_device),
-    )
-
-
 def _solve_discrete_sinkhorn_ot_geomloss(
     source_points: torch.Tensor,
     target_points: torch.Tensor,
@@ -893,16 +712,9 @@ def _solve_discrete_sinkhorn_ot_geomloss(
     tolerance: float,
     batch_size: int,
     compute_device: torch.device,
+    compute_backend: str,
 ) -> SinkhornOTResult:
-    """Run online Sinkhorn with GeomLoss/PyKeOps and a lazy plan operator."""
-    try:
-        import geomloss.ot as geomloss_ot
-    except (ImportError, OSError) as error:
-        raise RuntimeError(
-            "The GeomLoss Sinkhorn backend requires both geomloss and "
-            "pykeops to be installed and importable."
-        ) from error
-
+    """Run POT's online GeomLoss/PyKeOps Sinkhorn integration."""
     source_compute = source_points.detach().to(
         device=compute_device,
         dtype=torch.float64,
@@ -918,20 +730,26 @@ def _solve_discrete_sinkhorn_ot_geomloss(
         device=compute_device,
         dtype=torch.float64,
     )
-    geomloss_result = geomloss_ot.solve_sample(
-        source_compute,
-        target_compute,
-        a=uniform_weights,
-        b=uniform_weights,
-        cost="sqeuclidean",
-        reg=epsilon,
-        debias=False,
-        method="auto",
-        max_iter=maximum_iterations,
-        # GeomLoss 0.3.1 accepts ``tol`` in its signature but explicitly
-        # rejects it because rigorous stopping criteria are not implemented.
-        tol=None,
-    )
+    try:
+        geomloss_result = ot.solve_sample(
+            source_compute,
+            target_compute,
+            metric="sqeuclidean",
+            reg=epsilon,
+            method="geomloss",
+            lazy=True,
+            max_iter=maximum_iterations,
+            # GeomLoss 0.3.1 accepts ``tol`` in its signature but explicitly
+            # rejects it because rigorous stopping criteria are not implemented.
+            tol=None,
+            a=uniform_weights,
+            b=uniform_weights,
+        )
+    except (ImportError, OSError) as error:
+        raise RuntimeError(
+            "POT's GeomLoss Sinkhorn backend requires both geomloss and "
+            "pykeops to be installed and importable."
+        ) from error
     if geomloss_result.lazy_plan is None:
         raise RuntimeError(
             "GeomLoss did not expose a lazy KeOps plan. Refusing to "
@@ -1016,7 +834,7 @@ def _solve_discrete_sinkhorn_ot_geomloss(
         number_of_iterations=None,
         final_error=final_error,
         converged=converged,
-        compute_backend="geomloss",
+        compute_backend=compute_backend,
         compute_device=str(compute_device),
     )
 
@@ -1036,9 +854,9 @@ def solve_discrete_sinkhorn_ot(
 
     All backends avoid a persistent dense ``N x N`` matrix and preserve
     float64 computation. ``cpu`` uses POT's lazy empirical Sinkhorn solver;
-    ``cuda`` uses blockwise log-domain Torch because POT's installed lazy path
-    computes distance blocks in NumPy; ``geomloss`` uses the online PyKeOps
-    operator on CUDA when available and CPU otherwise. The returned map is
+    ``cuda`` uses POT's GeomLoss/PyKeOps integration on a required CUDA device;
+    ``geomloss`` uses the same online POT integration on CUDA when available
+    and CPU otherwise. The returned map is
 
     ``T_epsilon(x_i) = sum_j gamma_ij y_j / sum_j gamma_ij``.
 
@@ -1072,14 +890,13 @@ def solve_discrete_sinkhorn_ot(
                 "The CUDA Sinkhorn backend was requested, but CUDA is not "
                 "available to PyTorch."
             )
-        return _solve_discrete_sinkhorn_ot_torch(
+        return _solve_discrete_sinkhorn_ot_geomloss(
             source_points,
             target_points,
             epsilon,
             maximum_iterations=maximum_iterations,
             tolerance=tolerance,
             batch_size=batch_size,
-            verbose=verbose,
             compute_device=torch.device("cuda"),
             compute_backend="cuda",
         )
@@ -1095,6 +912,7 @@ def solve_discrete_sinkhorn_ot(
             tolerance=tolerance,
             batch_size=batch_size,
             compute_device=geomloss_device,
+            compute_backend="geomloss",
         )
 
     source_numpy = _cpu_float64_numpy(source_points)
@@ -1217,8 +1035,9 @@ def solve_empirical_ot(
     ``dense_exact`` retains the original dense POT reference solver,
     ``lazy_exact`` uses POT's coordinate-based exact solver without a dense
     cost matrix, and ``sinkhorn`` computes a lazy entropic coupling and its
-    barycentric transport map. ``sinkhorn_compute_backend`` then selects lazy
-    POT on CPU, blockwise Torch on CUDA, or online GeomLoss/PyKeOps.
+    barycentric transport map. ``sinkhorn_compute_backend`` then selects POT's
+    default lazy CPU solver or its online GeomLoss/PyKeOps integration with a
+    forced or automatically selected device.
     Sinkhorn-specific arguments are ignored by the exact backends, apart from
     ``maximum_iterations`` which all solvers use.
 
