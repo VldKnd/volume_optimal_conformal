@@ -1,0 +1,61 @@
+name: seed_09
+seed: 9
+save_directory: benchmark/results/10_seeds/onp/global_otcp
+
+dataset_config:
+  type: onp
+  file_path: data/onp/OnlineNewsPopularity.csv
+  x_dim: 29
+  y_dim: 8
+  train_fraction: 0.6
+  calibration_fraction: 0.2
+  test_fraction: 0.2
+  seed: 9
+  device: cpu
+  dtype: float32
+
+predictor_config:
+  type: random_forest
+  x_dim: 29
+  y_dim: 8
+  n_estimators: 100
+  max_depth: null
+  seed: 9
+  device: cpu
+  dtype: float32
+
+trainer_config:
+  epochs: 1
+
+conformal_config:
+  type: residual
+  coverage_mass: 0.9
+  calibrator:
+    type: global_otcp
+    seed: 9
+  volume_mc_samples: 1000
+  volume_n_neighbors: 100
+  volume_seed: 9
+
+train_batch_size: 4096
+calibration_batch_size: 512
+test_batch_size: 512
+compute_volume: true
+metrics_verbose: true
+
+wandb:
+  mode: online
+  project: minimal-volume-conformal-prediction
+  entity: null
+  group: 10_seeds/onp/global_otcp
+  name: global_otcp_seed_09
+  tags:
+    - onp
+    - 10_seeds
+    - final-benchmark
+    - random-forest
+    - residual
+    - global-otcp
+  job_type: global_otcp
+  log_every_n_steps: 20
+  log_solver_diagnostics: false
