@@ -760,6 +760,12 @@ wheels = [
 ]
 
 [[package]]
+name = "keopscore"
+version = "2.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/91/28/94f516c55fca15be37cc75d56f9560d3be5a4badc87ca78202e06dd2d526/keopscore-2.3.tar.gz", hash = "sha256:e8a700c22efee59a7723ed7516c2d88ab143a11290dd23b07eb7bba1c9d16fef", size = 118471, upload-time = "2025-04-17T12:07:37.539Z" }
+
+[[package]]
 name = "kiwisolver"
 version = "1.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -897,6 +903,7 @@ dependencies = [
     { name = "pot" },
     { name = "pyarrow" },
     { name = "pydantic" },
+    { name = "pykeops" },
     { name = "pyyaml" },
     { name = "scikit-learn" },
     { name = "scipy" },
@@ -935,6 +942,7 @@ requires-dist = [
     { name = "pot", specifier = ">=0.9.5" },
     { name = "pyarrow", specifier = ">=21.0.0" },
     { name = "pydantic", specifier = ">=2.11.7" },
+    { name = "pykeops", specifier = ">=2.3" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "scikit-learn", specifier = ">=1.7.0" },
     { name = "scipy", specifier = ">=1.16.0" },
@@ -1589,6 +1597,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pybind11"
+version = "3.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/76/f3/95b0f40b31df41dbfe6bb0857419c9442c15839cbac4796f1c26ae0b6081/pybind11-3.1.0.tar.gz", hash = "sha256:a1cc06b524ab3edca51f8ad3895f9c4fa20b8b19283173dff4ae781449dc9639", size = 603746, upload-time = "2026-08-06T23:33:00.675Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/33/fd/8762f7ee3e4e4be6d1d846cffb4916dd9bb02b2f800d3603718a0efe494c/pybind11-3.1.0-py3-none-any.whl", hash = "sha256:b8488090f8acffbcb6b5d6a85571a6827a0a2981ffb75e5a0b27b87c4a6b7dd0", size = 319402, upload-time = "2026-08-06T23:32:59.047Z" },
+]
+
+[[package]]
 name = "pycparser"
 version = "3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1658,6 +1675,17 @@ sdist = { url = "https://files.pythonhosted.org/packages/c3/b2/bc9c9196916376152
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f4/7e/a72dd26f3b0f4f2bf1dd8923c85f7ceb43172af56d63c7383eb62b332364/pygments-2.20.0-py3-none-any.whl", hash = "sha256:81a9e26dd42fd28a23a2d169d86d7ac03b46e2f8b59ed4698fb4785f946d0176", size = 1231151, upload-time = "2026-03-29T13:29:30.038Z" },
 ]
+
+[[package]]
+name = "pykeops"
+version = "2.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "keopscore" },
+    { name = "numpy" },
+    { name = "pybind11" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3b/e1/3bb0af9916632e712cc0b0326679647d7452e626811dbc2b15b277add460/pykeops-2.3.tar.gz", hash = "sha256:458fa77985efd2161be9c719e8dd41e495526cd735d3262aec09902505f5bdba", size = 552155, upload-time = "2025-04-17T12:07:25.927Z" }
 
 [[package]]
 name = "pyparsing"

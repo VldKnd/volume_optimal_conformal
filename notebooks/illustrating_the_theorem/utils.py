@@ -131,9 +131,11 @@ class SinkhornOTResult:
     target_marginals: torch.Tensor
     max_source_marginal_error: float
     max_target_marginal_error: float
-    number_of_iterations: int
+    number_of_iterations: int | None
     final_error: float
     converged: bool
+    compute_backend: str = "cpu"
+    compute_device: str = "cpu"
 
 
 OTSolverBackend: TypeAlias = Literal[
@@ -141,6 +143,7 @@ OTSolverBackend: TypeAlias = Literal[
     "lazy_exact",
     "sinkhorn",
 ]
+SinkhornComputeBackend: TypeAlias = Literal["cpu", "cuda", "geomloss"]
 EmpiricalOTResult: TypeAlias = (
     DiscreteOTMatching | LazyExactOTResult | SinkhornOTResult
 )
@@ -198,6 +201,7 @@ class LogVolumeRatioExperiment:
     ot_backend: str = "dense_exact"
     regularization: float | None = None
     solver_converged: bool | None = None
+    sinkhorn_compute_backend: str | None = None
 
 
 def log_ball_volume(dimension: int, radius: float = 1.0) -> float:
@@ -687,11 +691,342 @@ def solve_discrete_exact_ot_lazy(
     )
 
 
+def _squared_euclidean_cost_block(
+    source_block: torch.Tensor,
+    target_block: torch.Tensor,
+) -> torch.Tensor:
+    """Compute one squared-Euclidean cost block without a 3-D difference."""
+    source_norms = source_block.square().sum(dim=1, keepdim=True)
+    target_norms = target_block.square().sum(dim=1).unsqueeze(0)
+    return (
+        source_norms + target_norms - 2.0 * source_block @ target_block.T
+    ).clamp_min(0.0)
+
+
+def _solve_discrete_sinkhorn_ot_torch(
+    source_points: torch.Tensor,
+    target_points: torch.Tensor,
+    epsilon: float,
+    *,
+    maximum_iterations: int,
+    tolerance: float,
+    batch_size: int,
+    verbose: bool,
+    compute_device: torch.device,
+    compute_backend: str,
+) -> SinkhornOTResult:
+    """Run blockwise log-domain Sinkhorn with Torch on ``compute_device``."""
+    source_compute = source_points.detach().to(
+        device=compute_device,
+        dtype=torch.float64,
+    )
+    target_compute = target_points.detach().to(
+        device=compute_device,
+        dtype=torch.float64,
+    )
+    number_of_points = source_compute.shape[0]
+    log_uniform_weight = -math.log(number_of_points)
+    uniform_weight = 1.0 / number_of_points
+    source_log_scaling = torch.zeros(
+        number_of_points,
+        device=compute_device,
+        dtype=torch.float64,
+    )
+    target_log_scaling = torch.zeros_like(source_log_scaling)
+
+    number_of_iterations = 0
+    for iteration in range(maximum_iterations):
+        source_updates = []
+        for start in range(0, number_of_points, batch_size):
+            stop = min(start + batch_size, number_of_points)
+            cost_block = _squared_euclidean_cost_block(
+                source_compute[start:stop],
+                target_compute,
+            )
+            source_updates.append(
+                log_uniform_weight - torch.logsumexp(
+                    target_log_scaling.unsqueeze(0) - cost_block / epsilon,
+                    dim=1,
+                )
+            )
+        source_log_scaling = torch.cat(source_updates)
+
+        target_updates = []
+        for start in range(0, number_of_points, batch_size):
+            stop = min(start + batch_size, number_of_points)
+            cost_block = _squared_euclidean_cost_block(
+                source_compute,
+                target_compute[start:stop],
+            )
+            target_updates.append(
+                log_uniform_weight - torch.logsumexp(
+                    source_log_scaling.unsqueeze(1) - cost_block / epsilon,
+                    dim=0,
+                )
+            )
+        target_log_scaling = torch.cat(target_updates)
+        number_of_iterations = iteration + 1
+
+        should_check = (
+            number_of_iterations % 10 == 0
+            or number_of_iterations == maximum_iterations
+        )
+        if should_check:
+            source_marginal_l1_error = torch.zeros(
+                (),
+                device=compute_device,
+                dtype=torch.float64,
+            )
+            for start in range(0, number_of_points, batch_size):
+                stop = min(start + batch_size, number_of_points)
+                cost_block = _squared_euclidean_cost_block(
+                    source_compute[start:stop],
+                    target_compute,
+                )
+                log_plan_block = (
+                    source_log_scaling[start:stop].unsqueeze(1)
+                    + target_log_scaling.unsqueeze(0)
+                    - cost_block / epsilon
+                )
+                row_masses = torch.exp(log_plan_block).sum(dim=1)
+                source_marginal_l1_error += (
+                    row_masses - uniform_weight
+                ).abs().sum()
+            current_error = float(source_marginal_l1_error)
+            if verbose and number_of_iterations % 100 == 0:
+                print(
+                    "Error in marginal at iteration "
+                    f"{number_of_iterations} = {current_error}"
+                )
+            if current_error <= tolerance:
+                break
+
+    transported_source_compute = torch.empty_like(source_compute)
+    source_marginals_compute = torch.empty(
+        number_of_points,
+        device=compute_device,
+        dtype=torch.float64,
+    )
+    target_marginals_compute = torch.zeros_like(source_marginals_compute)
+    transport_cost_compute = torch.zeros(
+        (),
+        device=compute_device,
+        dtype=torch.float64,
+    )
+    entropy_compute = torch.zeros_like(transport_cost_compute)
+    for start in range(0, number_of_points, batch_size):
+        stop = min(start + batch_size, number_of_points)
+        cost_block = _squared_euclidean_cost_block(
+            source_compute[start:stop],
+            target_compute,
+        )
+        log_plan_block = (
+            source_log_scaling[start:stop].unsqueeze(1)
+            + target_log_scaling.unsqueeze(0)
+            - cost_block / epsilon
+        )
+        plan_block = torch.exp(log_plan_block)
+        row_masses = plan_block.sum(dim=1)
+        if bool((row_masses <= 0.0).any()):
+            raise RuntimeError("Torch returned a zero-mass Sinkhorn source row.")
+        source_marginals_compute[start:stop] = row_masses
+        target_marginals_compute += plan_block.sum(dim=0)
+        transported_source_compute[start:stop] = (
+            plan_block @ target_compute
+        ) / row_masses.unsqueeze(1)
+        transport_cost_compute += (plan_block * cost_block).sum()
+        entropy_compute += (plan_block * log_plan_block).sum()
+
+    regularized_cost_compute = (
+        transport_cost_compute + epsilon * entropy_compute
+    )
+    if not bool(torch.isfinite(transported_source_compute).all()) or not bool(
+        torch.isfinite(regularized_cost_compute)
+    ):
+        raise RuntimeError("Torch returned non-finite Sinkhorn outputs.")
+
+    max_source_marginal_error = float(
+        (source_marginals_compute - uniform_weight).abs().max()
+    )
+    max_target_marginal_error = float(
+        (target_marginals_compute - uniform_weight).abs().max()
+    )
+    final_error = max(
+        max_source_marginal_error,
+        max_target_marginal_error,
+    )
+    converged = math.isfinite(final_error) and final_error <= tolerance
+    return SinkhornOTResult(
+        source_points=source_points.detach(),
+        target_points=target_points.detach(),
+        transported_source_points=transported_source_compute.to(
+            device=source_points.device,
+            dtype=source_points.dtype,
+        ),
+        transport_cost=float(transport_cost_compute),
+        regularized_transport_cost=float(regularized_cost_compute),
+        regularization=epsilon,
+        source_marginals=source_marginals_compute.to(
+            device=source_points.device,
+            dtype=source_points.dtype,
+        ),
+        target_marginals=target_marginals_compute.to(
+            device=target_points.device,
+            dtype=target_points.dtype,
+        ),
+        max_source_marginal_error=max_source_marginal_error,
+        max_target_marginal_error=max_target_marginal_error,
+        number_of_iterations=number_of_iterations,
+        final_error=final_error,
+        converged=converged,
+        compute_backend=compute_backend,
+        compute_device=str(compute_device),
+    )
+
+
+def _solve_discrete_sinkhorn_ot_geomloss(
+    source_points: torch.Tensor,
+    target_points: torch.Tensor,
+    epsilon: float,
+    *,
+    maximum_iterations: int,
+    tolerance: float,
+    batch_size: int,
+    compute_device: torch.device,
+) -> SinkhornOTResult:
+    """Run online Sinkhorn with GeomLoss/PyKeOps and a lazy plan operator."""
+    try:
+        import geomloss.ot as geomloss_ot
+    except (ImportError, OSError) as error:
+        raise RuntimeError(
+            "The GeomLoss Sinkhorn backend requires both geomloss and "
+            "pykeops to be installed and importable."
+        ) from error
+
+    source_compute = source_points.detach().to(
+        device=compute_device,
+        dtype=torch.float64,
+    )
+    target_compute = target_points.detach().to(
+        device=compute_device,
+        dtype=torch.float64,
+    )
+    number_of_points = source_compute.shape[0]
+    uniform_weights = torch.full(
+        (number_of_points, ),
+        1.0 / number_of_points,
+        device=compute_device,
+        dtype=torch.float64,
+    )
+    geomloss_result = geomloss_ot.solve_sample(
+        source_compute,
+        target_compute,
+        a=uniform_weights,
+        b=uniform_weights,
+        cost="sqeuclidean",
+        reg=epsilon,
+        debias=False,
+        method="auto",
+        max_iter=maximum_iterations,
+        # GeomLoss 0.3.1 accepts ``tol`` in its signature but explicitly
+        # rejects it because rigorous stopping criteria are not implemented.
+        tol=None,
+    )
+    if geomloss_result.lazy_plan is None:
+        raise RuntimeError(
+            "GeomLoss did not expose a lazy KeOps plan. Refusing to "
+            "materialize a dense Sinkhorn coupling."
+        )
+
+    source_marginals_compute = geomloss_result.marginal_a
+    target_marginals_compute = geomloss_result.marginal_b
+    barycentric_numerator = geomloss_result.plan_operator @ target_compute
+    transported_source_compute = (
+        barycentric_numerator / source_marginals_compute.unsqueeze(1)
+    )
+
+    source_potential = geomloss_result.potential_a
+    target_potential = geomloss_result.potential_b
+    log_uniform_weight = -math.log(number_of_points)
+    transport_cost_compute = torch.zeros(
+        (),
+        device=compute_device,
+        dtype=torch.float64,
+    )
+    entropy_compute = torch.zeros_like(transport_cost_compute)
+    for start in range(0, number_of_points, batch_size):
+        stop = min(start + batch_size, number_of_points)
+        cost_block = _squared_euclidean_cost_block(
+            source_compute[start:stop],
+            target_compute,
+        )
+        log_plan_block = (
+            2.0 * log_uniform_weight
+            + (
+                source_potential[start:stop].unsqueeze(1)
+                + target_potential.unsqueeze(0)
+                - cost_block
+            ) / epsilon
+        )
+        plan_block = torch.exp(log_plan_block)
+        transport_cost_compute += (plan_block * cost_block).sum()
+        entropy_compute += (plan_block * log_plan_block).sum()
+
+    regularized_cost_compute = (
+        transport_cost_compute + epsilon * entropy_compute
+    )
+    if not bool(torch.isfinite(transported_source_compute).all()) or not bool(
+        torch.isfinite(regularized_cost_compute)
+    ):
+        raise RuntimeError("GeomLoss returned non-finite Sinkhorn outputs.")
+
+    uniform_weight = 1.0 / number_of_points
+    max_source_marginal_error = float(
+        (source_marginals_compute - uniform_weight).abs().max()
+    )
+    max_target_marginal_error = float(
+        (target_marginals_compute - uniform_weight).abs().max()
+    )
+    final_error = max(
+        max_source_marginal_error,
+        max_target_marginal_error,
+    )
+    converged = math.isfinite(final_error) and final_error <= tolerance
+    return SinkhornOTResult(
+        source_points=source_points.detach(),
+        target_points=target_points.detach(),
+        transported_source_points=transported_source_compute.to(
+            device=source_points.device,
+            dtype=source_points.dtype,
+        ),
+        transport_cost=float(transport_cost_compute),
+        regularized_transport_cost=float(regularized_cost_compute),
+        regularization=epsilon,
+        source_marginals=source_marginals_compute.to(
+            device=source_points.device,
+            dtype=source_points.dtype,
+        ),
+        target_marginals=target_marginals_compute.to(
+            device=target_points.device,
+            dtype=target_points.dtype,
+        ),
+        max_source_marginal_error=max_source_marginal_error,
+        max_target_marginal_error=max_target_marginal_error,
+        # GeomLoss 0.3.1 does not expose the number of completed iterations.
+        number_of_iterations=None,
+        final_error=final_error,
+        converged=converged,
+        compute_backend="geomloss",
+        compute_device=str(compute_device),
+    )
+
+
 def solve_discrete_sinkhorn_ot(
     source_points: torch.Tensor,
     target_points: torch.Tensor,
     epsilon: float,
     *,
+    compute_backend: SinkhornComputeBackend = "cpu",
     maximum_iterations: int = 10_000,
     tolerance: float = 1e-9,
     batch_size: int = 256,
@@ -699,15 +1034,20 @@ def solve_discrete_sinkhorn_ot(
 ) -> SinkhornOTResult:
     """Solve scalable entropic empirical OT and return its barycentric map.
 
-    POT's lazy empirical Sinkhorn solver computes cost and coupling blocks on
-    demand, avoiding a persistent dense ``N x N`` matrix. Computation is done
-    on CPU in float64. The returned map is
+    All backends avoid a persistent dense ``N x N`` matrix and preserve
+    float64 computation. ``cpu`` uses POT's lazy empirical Sinkhorn solver;
+    ``cuda`` uses blockwise log-domain Torch because POT's installed lazy path
+    computes distance blocks in NumPy; ``geomloss`` uses the online PyKeOps
+    operator on CUDA when available and CPU otherwise. The returned map is
 
     ``T_epsilon(x_i) = sum_j gamma_ij y_j / sum_j gamma_ij``.
 
     Unlike exact OT, the entropic coupling is generally not a permutation, so
     this function returns :class:`SinkhornOTResult` rather than forcing the
-    solution into :class:`DiscreteOTMatching`.
+    solution into :class:`DiscreteOTMatching`. GeomLoss 0.3.1 does not expose
+    rigorous tolerance stopping or its completed iteration count; for that
+    backend, ``tolerance`` is applied to the returned marginal diagnostics and
+    ``number_of_iterations`` is ``None``.
     """
     _validate_ot_point_clouds(source_points, target_points)
     if not math.isfinite(epsilon) or epsilon <= 0.0:
@@ -722,6 +1062,40 @@ def solve_discrete_sinkhorn_ot(
         raise TypeError("batch_size must be an integer.")
     if batch_size < 1:
         raise ValueError("batch_size must be positive.")
+    if compute_backend not in ("cpu", "cuda", "geomloss"):
+        raise ValueError(
+            "compute_backend must be 'cpu', 'cuda', or 'geomloss'."
+        )
+    if compute_backend == "cuda":
+        if not torch.cuda.is_available():
+            raise RuntimeError(
+                "The CUDA Sinkhorn backend was requested, but CUDA is not "
+                "available to PyTorch."
+            )
+        return _solve_discrete_sinkhorn_ot_torch(
+            source_points,
+            target_points,
+            epsilon,
+            maximum_iterations=maximum_iterations,
+            tolerance=tolerance,
+            batch_size=batch_size,
+            verbose=verbose,
+            compute_device=torch.device("cuda"),
+            compute_backend="cuda",
+        )
+    if compute_backend == "geomloss":
+        geomloss_device = torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu"
+        )
+        return _solve_discrete_sinkhorn_ot_geomloss(
+            source_points,
+            target_points,
+            epsilon,
+            maximum_iterations=maximum_iterations,
+            tolerance=tolerance,
+            batch_size=batch_size,
+            compute_device=geomloss_device,
+        )
 
     source_numpy = _cpu_float64_numpy(source_points)
     target_numpy = _cpu_float64_numpy(target_points)
@@ -821,6 +1195,8 @@ def solve_discrete_sinkhorn_ot(
         number_of_iterations=number_of_iterations,
         final_error=final_error,
         converged=converged,
+        compute_backend="cpu",
+        compute_device="cpu",
     )
 
 
@@ -830,6 +1206,7 @@ def solve_empirical_ot(
     *,
     backend: OTSolverBackend = "dense_exact",
     epsilon: float = 0.1,
+    sinkhorn_compute_backend: SinkhornComputeBackend = "cpu",
     maximum_iterations: int = 1_000_000,
     tolerance: float = 1e-9,
     batch_size: int = 256,
@@ -840,8 +1217,10 @@ def solve_empirical_ot(
     ``dense_exact`` retains the original dense POT reference solver,
     ``lazy_exact`` uses POT's coordinate-based exact solver without a dense
     cost matrix, and ``sinkhorn`` computes a lazy entropic coupling and its
-    barycentric transport map. Sinkhorn-specific arguments are ignored by the
-    exact backends, apart from ``maximum_iterations`` which all solvers use.
+    barycentric transport map. ``sinkhorn_compute_backend`` then selects lazy
+    POT on CPU, blockwise Torch on CUDA, or online GeomLoss/PyKeOps.
+    Sinkhorn-specific arguments are ignored by the exact backends, apart from
+    ``maximum_iterations`` which all solvers use.
 
     The result type reflects the selected algorithm: Sinkhorn is deliberately
     kept separate from :class:`DiscreteOTMatching` because its coupling is not
@@ -864,6 +1243,7 @@ def solve_empirical_ot(
             source_points,
             target_points,
             epsilon=epsilon,
+            compute_backend=sinkhorn_compute_backend,
             maximum_iterations=maximum_iterations,
             tolerance=tolerance,
             batch_size=batch_size,
@@ -923,6 +1303,7 @@ def sample_empirical_ot(
     *,
     backend: OTSolverBackend = "dense_exact",
     epsilon: float = 0.1,
+    sinkhorn_compute_backend: SinkhornComputeBackend = "cpu",
     source_generator: torch.Generator | None = None,
     target_generator: torch.Generator | None = None,
     device: torch.device | str = "cpu",
@@ -954,6 +1335,7 @@ def sample_empirical_ot(
         target_points,
         backend=backend,
         epsilon=epsilon,
+        sinkhorn_compute_backend=sinkhorn_compute_backend,
         maximum_iterations=maximum_iterations,
         tolerance=tolerance,
         batch_size=batch_size,
@@ -1114,6 +1496,7 @@ def run_log_volume_ratio_experiment(
     *,
     ot_backend: OTSolverBackend = "dense_exact",
     sinkhorn_epsilon: float = 0.1,
+    sinkhorn_compute_backend: SinkhornComputeBackend = "cpu",
     ot_maximum_iterations: int = 1_000_000,
     ot_tolerance: float = 1e-9,
     ot_batch_size: int = 256,
@@ -1138,6 +1521,7 @@ def run_log_volume_ratio_experiment(
         k=k,
         backend=ot_backend,
         epsilon=sinkhorn_epsilon,
+        sinkhorn_compute_backend=sinkhorn_compute_backend,
         source_generator=source_generator,
         target_generator=target_generator,
         maximum_iterations=ot_maximum_iterations,
@@ -1187,6 +1571,9 @@ def run_log_volume_ratio_experiment(
             sinkhorn_epsilon if ot_backend == "sinkhorn" else None
         ),
         solver_converged=solver_converged,
+        sinkhorn_compute_backend=(
+            sinkhorn_compute_backend if ot_backend == "sinkhorn" else None
+        ),
     )
 
 
@@ -1198,6 +1585,7 @@ __all__ = [
     "MonteCarloOTRegionVolume",
     "OTSolverBackend",
     "SinkhornOTResult",
+    "SinkhornComputeBackend",
     "ball_volume",
     "empirical_ot_transport_cost",
     "empirical_ot_transport_pairs",
