@@ -14,9 +14,10 @@ class OnlineNewsPopularityDataset(BaseRealDataset):
     """Leakage-controlled UCI Online News Popularity benchmark.
 
     The eight targets are standardized independently using training statistics.
-    Continuous predictors are also standardized from the training split, while
-    data-channel and weekday indicator columns remain in their original binary
-    representation.
+    Rows with non-finite values or malformed bounded ratio features are removed
+    before splitting. Continuous predictors are then standardized from the
+    training split, while data-channel and weekday indicator columns remain in
+    their original binary representation.
     """
 
     dataset_name = "Online News Popularity"
@@ -49,6 +50,11 @@ class OnlineNewsPopularityDataset(BaseRealDataset):
         "weekday_is_saturday",
         "weekday_is_sunday",
         "is_weekend",
+    )
+    bounded_feature_names = (
+        "n_unique_tokens",
+        "n_non_stop_words",
+        "n_non_stop_unique_tokens",
     )
     non_target_exclusions = (
         "url",
@@ -86,6 +92,7 @@ class OnlineNewsPopularityDataset(BaseRealDataset):
         self.binary_feature_mask: torch.Tensor | None = None
         self.continuous_feature_names: tuple[str, ...] = ()
         self.n_removed_non_finite_rows = 0
+        self.n_removed_malformed_rows = 0
 
     def load_data(self) -> tuple[np.ndarray, np.ndarray, tuple[str, ...]]:
         with self.file_path.open("r", encoding="utf-8", newline="") as file:
@@ -99,8 +106,11 @@ class OnlineNewsPopularityDataset(BaseRealDataset):
             raise ValueError(
                 f"CSV file at '{self.file_path}' contains duplicate columns."
             )
-        required_columns = set(self.excluded_feature_names
-                               ).union(self.binary_feature_names)
+        required_columns = (
+            set(self.excluded_feature_names)
+            .union(self.binary_feature_names)
+            .union(self.bounded_feature_names)
+        )
         missing_columns = required_columns.difference(column_names)
         if missing_columns:
             raise ValueError(
@@ -163,8 +173,20 @@ class OnlineNewsPopularityDataset(BaseRealDataset):
         self.n_removed_non_finite_rows = int((~finite_rows).sum())
         x = np.asarray(x[finite_rows], dtype=np.float64)
         y = np.asarray(y[finite_rows], dtype=np.float64)
+
+        bounded_feature_indexes = tuple(
+            feature_names.index(name) for name in self.bounded_feature_names
+        )
+        bounded_x = x[:, bounded_feature_indexes]
+        well_formed_rows = ((bounded_x >= 0.0) & (bounded_x <= 1.0)).all(axis=1)
+        self.n_removed_malformed_rows = int((~well_formed_rows).sum())
+        x = x[well_formed_rows]
+        y = y[well_formed_rows]
         if x.shape[0] < 3:
-            raise ValueError("Online News Popularity needs at least three finite rows.")
+            raise ValueError(
+                "Online News Popularity needs at least three finite, "
+                "well-formed rows."
+            )
 
         generator = torch.Generator(device="cpu")
         generator.manual_seed(self.config.seed)
