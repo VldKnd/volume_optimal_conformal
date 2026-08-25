@@ -22,6 +22,7 @@ DatasetConfig = Annotated[
     | real_dataset_configs.ATP7dDatasetConfig
     | real_dataset_configs.BioDatasetConfig
     | real_dataset_configs.BlogDatasetConfig
+    | real_dataset_configs.OnlineNewsPopularityDatasetConfig
     | real_dataset_configs.QM9DatasetConfig
     | real_dataset_configs.RF1DatasetConfig
     | real_dataset_configs.RF2DatasetConfig

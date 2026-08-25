@@ -264,6 +264,10 @@ class ExperimentRunner:
             self.dataset = real_datasets.BioDataset(dataset_config)
         elif dataset_config.type == "blog":
             self.dataset = real_datasets.BlogDataset(dataset_config)
+        elif dataset_config.type == "onp":
+            self.dataset = real_datasets.OnlineNewsPopularityDataset(
+                dataset_config
+            )
         elif dataset_config.type == "qm9":
             self.dataset = real_datasets.QM9Dataset(dataset_config)
         elif dataset_config.type == "scm1d":
