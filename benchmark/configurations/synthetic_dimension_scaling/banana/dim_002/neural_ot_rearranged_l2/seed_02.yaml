@@ -45,7 +45,7 @@ rearrangement_config:
   time_dependent: true
   vector_field_implementation: sparse
   activation: silu
-  use_adjoint: false
+  use_adjoint: true
   method: dopri5
   rtol: 1.0e-05
   atol: 1.0e-06
@@ -101,6 +101,7 @@ wandb:
     - non-amortized
     - sparse
     - dopri5
+    - adjoint
   job_type: neural_ot_rearranged_l2
   log_every_n_steps: 20
   log_solver_diagnostics: true
