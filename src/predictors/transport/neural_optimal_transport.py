@@ -42,6 +42,7 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
         self.y_dim = config.y_dim
 
         self.potential_type = config.potential_type
+        self.standardize_y = config.standardize_y
 
         self.potential_network = PISCNN(
             feature_dimension=config.x_dim,
@@ -62,6 +63,10 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
     def warmup_y_scaler(self, dataloader) -> None:
         self.y_scaler.reset_running_stats()
 
+        if not self.standardize_y:
+            self.y_scaler.eval()
+            return
+
         for _, y_batch in dataloader:
             y_batch = self.to_device(y_batch)
             self.y_scaler.update(y_batch)
@@ -69,9 +74,13 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
         self.y_scaler.eval()
 
     def scale_y(self, y: torch.Tensor) -> torch.Tensor:
+        if not self.standardize_y:
+            return y
         return self.y_scaler(y)
 
     def unscale_y(self, y_scaled: torch.Tensor) -> torch.Tensor:
+        if not self.standardize_y:
+            return y_scaled
         return (
             y_scaled * torch.sqrt(self.y_scaler.running_var + self.y_scaler.eps) +
             self.y_scaler.running_mean
@@ -391,6 +400,8 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
         return log_det.detach()
 
     def _unscale_y_log_det(self) -> torch.Tensor:
+        if not self.standardize_y:
+            return self.y_scaler.running_var.new_zeros(())
         return 0.5 * torch.log(self.y_scaler.running_var + self.y_scaler.eps).sum()
 
     @torch.enable_grad()

@@ -4,7 +4,7 @@ save_directory: benchmark/results/student_t/dim_4/k_2/transport_neural_ot_l2
 
 dataset_config:
   type: student_t_dataset
-  n_train: 100000
+  n_train: 20000
   n_calibration: 1000
   n_test: 1000
   x_dim: 1
@@ -19,9 +19,10 @@ predictor_config:
   type: neural_optimal_transport
   x_dim: 1
   y_dim: 4
-  hidden_dim: 64
-  num_hidden_layers: 8
+  hidden_dim: 32
+  num_hidden_layers: 2
   potential_type: u
+  standardize_y: false
   c_transform_lr: 1.0
   c_transform_max_iter: 1000
   seed: 1
@@ -29,7 +30,7 @@ predictor_config:
   dtype: float32
 
 trainer_config:
-  epochs: 250
+  epochs: 100
   learning_rate: 0.001
   weight_decay: 0.0001
   warmup_iterations: 10

@@ -153,8 +153,10 @@ The Student-t suite contains 300 configurations below
 and both base and rearranged Neural OT runs. Settings are nested dimension
 first, for example `dim_2/k_1` through `dim_32/k_32`. All targets use `nu=3`
 and the determinant-one diagonal scale matrix implemented by `StudentTDataset`.
-Each dataset has 100,000 training observations, 1,000 calibration observations,
-and 1,000 test observations.
+Each dataset has 20,000 training observations, 1,000 calibration observations,
+and 1,000 test observations. Neural OT target standardization is disabled in
+this suite so that coordinate-wise whitening does not remove the effect of
+the condition number.
 
 Generate or refresh the suite with:
 

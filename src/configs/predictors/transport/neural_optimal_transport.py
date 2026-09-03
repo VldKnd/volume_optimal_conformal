@@ -15,6 +15,7 @@ class NeuralOptimalTransportPredictorConfig(BaseModel):
     num_hidden_layers: int = 3
 
     potential_type: Literal["u", "y"] = "u"
+    standardize_y: bool = True
 
     c_transform_lr: float = 1.
     c_transform_max_iter: int = 1000
