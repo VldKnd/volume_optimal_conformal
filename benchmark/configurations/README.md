@@ -147,11 +147,14 @@ before launching the full benchmark.
 
 ## Student-t benchmark
 
-The Student-t suite contains 160 configurations below
-`benchmark/configurations/student_t`: four target dimensions, four values of
-`k`, five seeds, and both base and amortized-rearranged Neural OT runs. All
-targets use `nu=3` and the determinant-one diagonal scale matrix implemented by
-`StudentTDataset`.
+The Student-t suite contains 300 configurations below
+`benchmark/configurations/student_t`: five target dimensions
+(`2, 4, 8, 16, 32`), six condition numbers (`1, 2, 4, 8, 16, 32`), five seeds,
+and both base and rearranged Neural OT runs. Settings are nested dimension
+first, for example `dim_2/k_1` through `dim_32/k_32`. All targets use `nu=3`
+and the determinant-one diagonal scale matrix implemented by `StudentTDataset`.
+Each dataset has 100,000 training observations, 1,000 calibration observations,
+and 1,000 test observations.
 
 Generate or refresh the suite with:
 
@@ -160,23 +163,25 @@ uv run python scripts/generate_student_t_benchmark_configs.py
 ```
 
 Run the complete suite sequentially with the dedicated runner so that the
-analytic Student-t HDR comparison is included in `metrics.json`:
+analytic Student-t HDR comparison is included in `metrics.json`. The comparison
+is stored only in the log domain as the normalized log-volume fraction
+`(log Vol(conformal) - log Vol(HDR)) / dimension`:
 
 ```bash
 uv run python scripts/run_student_t_benchmark.py \
   benchmark/configurations/student_t
 ```
 
-The base family sorts before the rearranged family within each parameter
-setting. Therefore, sequential execution creates each Neural OT checkpoint
-before the matching rearranged configuration loads it. When scheduling runs
+The dedicated runner sorts numerically by dimension and condition number, then
+by model stage and seed. Therefore, sequential execution follows `dim_2/k_1`,
+`dim_2/k_2`, ..., `dim_32/k_32` and creates each Neural OT checkpoint before
+the matching rearranged configuration loads it. When scheduling runs
 independently, complete the `transport_neural_ot_l2` configurations before
 submitting their corresponding `transport_neural_ot_rearranged_l2`
 configurations.
 
 The supplied Slurm script creates one GPU job and sequentially processes all
-160 configurations. The recursively sorted configuration paths run every base
-family before the corresponding rearranged family, preserving the checkpoint
+300 configurations. The dedicated runner preserves the same checkpoint
 dependency:
 
 ```bash

@@ -19,6 +19,11 @@ class StudentTHDR(NamedTuple):
     semi_axis_lengths: torch.Tensor
     volume: float
 
+    @property
+    def log_volume(self) -> float:
+        """Return the HDR volume in the numerically stable reporting domain."""
+        return math.log(self.volume)
+
 
 class StudentTDataset(BaseSyntheticDataset):
     """Centered elliptical Student-t distribution with a dummy condition.
@@ -132,14 +137,14 @@ class StudentTDataset(BaseSyntheticDataset):
         log_scale_volume = 0.5 * float(
             torch.log(self._scale_diagonal).sum().detach().cpu()
         )
-        volume = math.exp(
+        log_volume = (
             log_unit_ball_volume + log_scale_volume + dimension * math.log(radius)
         )
 
         return StudentTHDR(
             radius=radius,
             semi_axis_lengths=semi_axis_lengths,
-            volume=volume,
+            volume=math.exp(log_volume),
         )
 
     def mean(self, x: torch.Tensor) -> torch.Tensor:
