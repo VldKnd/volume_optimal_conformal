@@ -19,6 +19,22 @@ from scripts.run_benchmark import (  # noqa: E402
     _discover_config_paths,
 )
 
+FAMILY_ORDER = {
+    "transport_neural_ot_l2": 0,
+    "transport_neural_ot_rearranged_l2": 1,
+}
+
+
+def _student_t_config_sort_key(item) -> tuple[int, float, int, int]:
+    """Order runs by dimension, condition number, stage, then seed."""
+    config_path, config = item
+    return (
+        config.dataset_config.y_dim,
+        float(config.dataset_config.k),
+        FAMILY_ORDER.get(config_path.parent.name, len(FAMILY_ORDER)),
+        config.seed,
+    )
+
 
 def run_student_t_benchmark(
     config,
@@ -67,6 +83,7 @@ def main() -> None:
             _apply_wandb_overrides(load_experiment_config(config_path), args),
         ) for config_path in config_paths
     ]
+    configs.sort(key=_student_t_config_sort_key)
 
     os.chdir(REPOSITORY_ROOT)
     benchmark_start = time.perf_counter()

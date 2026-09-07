@@ -11,8 +11,8 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 CONFIGURATION_ROOT = REPOSITORY_ROOT / "benchmark/configurations/student_t"
 
 NU = 3
-K_VALUES = (2, 4, 8, 16)
-Y_DIMS = (2, 4, 8, 16)
+K_VALUES = (1, 2, 4, 8, 16, 32)
+Y_DIMS = (2, 4, 8, 16, 32)
 SEEDS = range(5)
 FAMILIES = (
     "transport_neural_ot_l2",
@@ -78,8 +78,10 @@ def dump_config(config: dict[str, Any]) -> str:
 
 
 def parameter_slug(nu: int, k: int, y_dim: int) -> str:
-    """Return the directory name for one Student-t parameter setting."""
-    return f"nu_{nu}_k_{k}_y_dim_{y_dim}"
+    """Return the dimension-first path for one Student-t parameter setting."""
+    if nu != NU:
+        raise ValueError(f"This benchmark fixes nu={NU}, got {nu}.")
+    return f"dim_{y_dim}/k_{k}"
 
 
 def make_config(
@@ -125,8 +127,10 @@ def make_config(
             "type": "neural_optimal_transport",
             "x_dim": 1,
             "y_dim": y_dim,
-            "hidden_dim": 16,
-            "num_hidden_layers": 8,
+            "hidden_dim": 32,
+            "num_hidden_layers": 2,
+            "potential_type": "u",
+            "standardize_y": False,
             "c_transform_lr": 1.0,
             "c_transform_max_iter": 1_000,
             "seed": seed,
@@ -150,17 +154,19 @@ def make_config(
             "/base/predictor.pt"
         )
         config["rearrangement_config"] = {
-            "type": "amortized_rearranged_transport",
+            "type": "rearranged_transport",
             "x_dim": 1,
             "y_dim": y_dim,
-            "hidden_dimension": 32,
-            "number_of_hidden_layers": 9,
-            "use_adjoint": False,
-            "method": "dopri5",
-            "rtol": 0.0001,
-            "atol": 0.00001,
+            "hidden_dimension": 256,
+            "number_of_hidden_layers": 1,
+            "time_dependent": True,
             "vector_field_implementation": "sparse",
             "activation": "silu",
+            "use_adjoint": True,
+            "method": "dopri5",
+            "rtol": 1.0e-5,
+            "atol": 1.0e-6,
+            "number_of_steps": None,
             "seed": seed,
             "device": DEVICE,
             "dtype": DTYPE,
@@ -223,6 +229,7 @@ def _wandb_config(
     is_rearranged: bool,
 ) -> dict[str, Any]:
     tags = [
+        "table_1",
         "student-t",
         "synthetic",
         "neural-ot",
@@ -231,13 +238,13 @@ def _wandb_config(
         setting,
     ]
     if is_rearranged:
-        tags.extend(["rearranged", "amortized", "sparse", "dopri5"])
+        tags.extend(["rearranged", "sparse", "adjoint", "dopri5"])
 
     return {
         "mode": "online",
         "project": "minimal-volume-conformal-prediction",
         "group": f"student_t/{setting}/{family}",
-        "name": f"{setting}_{family}_seed_{seed:02d}",
+        "name": f"{setting.replace('/', '_')}_{family}_seed_{seed:02d}",
         "tags": tags,
         "job_type": family,
         "log_every_n_steps": 20,
@@ -247,6 +254,7 @@ def _wandb_config(
 
 def main() -> None:
     count = 0
+    expected_paths: set[Path] = set()
     for y_dim in Y_DIMS:
         for k in K_VALUES:
             setting = parameter_slug(nu=NU, k=k, y_dim=y_dim)
@@ -263,9 +271,26 @@ def main() -> None:
                     )
                     path = family_directory / f"seed_{seed:02d}.yaml"
                     path.write_text(dump_config(config), encoding="utf-8")
+                    expected_paths.add(path)
                     count += 1
 
-    print(f"Generated {count} Student-t benchmark configurations.")
+    stale_paths = set(CONFIGURATION_ROOT.rglob("*.yaml")) - expected_paths
+    for path in stale_paths:
+        path.unlink()
+    for directory in sorted(
+        (path for path in CONFIGURATION_ROOT.rglob("*") if path.is_dir()),
+        key=lambda path: len(path.parts),
+        reverse=True,
+    ):
+        try:
+            directory.rmdir()
+        except OSError:
+            pass
+
+    print(
+        f"Generated {count} Student-t benchmark configurations and removed "
+        f"{len(stale_paths)} stale configurations."
+    )
 
 
 if __name__ == "__main__":

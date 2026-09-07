@@ -273,9 +273,9 @@ def gaussian_covariance_diagonal(
 ) -> torch.Tensor:
     """Return ``diag(Sigma)`` for the experiment's anisotropic Gaussian.
 
-    The covariance is
+    The determinant-one covariance is
 
-        diag(k ** (d - 1/d), k ** (-1/d), ..., k ** (-1/d)).
+        diag(k ** (1 - 1/d), k ** (-1/d), ..., k ** (-1/d)).
     """
     _validate_dimension(dimension)
     if not math.isfinite(k) or k <= 0:
@@ -283,7 +283,7 @@ def gaussian_covariance_diagonal(
     if not dtype.is_floating_point:
         raise TypeError("dtype must be a floating-point torch dtype.")
 
-    leading_variance = k**(dimension - 1.0 / dimension)
+    leading_variance = k**(1.0 - 1.0 / dimension)
     remaining_variance = k**(-1.0 / dimension)
     covariance_diagonal = torch.full(
         (dimension, ),
@@ -306,8 +306,8 @@ def gaussian_hdr_log_volume(
 
         Sigma ** (1/2) B_d(0, F_Chi(d) ** (-1)(1 - alpha)).
 
-    For the experiment covariance, ``det(Sigma) = k ** (d - 1)`` and hence
-    ``abs(det(Sigma ** (1/2))) = k ** ((d - 1) / 2)``.
+    For the experiment covariance, ``det(Sigma) = 1`` and hence
+    ``abs(det(Sigma ** (1/2))) = 1``.
     """
     _validate_dimension(dimension)
     if not math.isfinite(k) or k <= 0:
@@ -318,11 +318,7 @@ def gaussian_hdr_log_volume(
     chi_squared_half = float(gammainccinv(0.5 * dimension, significance_level))
     log_chi_radius = 0.5 * (math.log(2.0) + math.log(chi_squared_half))
     log_unit_ball_volume = log_ball_volume(dimension=dimension, radius=1.0)
-    log_covariance_square_root_determinant = (0.5 * (dimension - 1) * math.log(k))
-    return (
-        log_unit_ball_volume + dimension * log_chi_radius +
-        log_covariance_square_root_determinant
-    )
+    return log_unit_ball_volume + dimension * log_chi_radius
 
 
 def gaussian_hdr_volume(

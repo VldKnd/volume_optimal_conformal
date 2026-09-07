@@ -48,7 +48,7 @@ CHECKPOINT_METHODS = frozenset(
     }
 )
 
-CDF_SAMPLES_BY_Y_DIM = {2: 32, 4: 64, 16: 512}
+CDF_SAMPLES_BY_Y_DIM = {2: 32, 4: 64, 8: 128, 16: 512}
 
 DATASETS: dict[str, dict[str, Any]] = {
     "bio": {
@@ -62,6 +62,13 @@ DATASETS: dict[str, dict[str, Any]] = {
         "file_path": "data/blog/blogData_train.csv",
         "x_dim": 279,
         "y_dim": 2,
+        "train_batch_size": 4_096,
+        "rearrangement_train_batch_size": 512,
+    },
+    "onp": {
+        "file_path": "data/onp/OnlineNewsPopularity.csv",
+        "x_dim": 29,
+        "y_dim": 8,
         "train_batch_size": 4_096,
         "rearrangement_train_batch_size": 512,
     },

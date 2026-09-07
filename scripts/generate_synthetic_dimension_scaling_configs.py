@@ -1,4 +1,4 @@
-"""Generate pairwise synthetic dimension-scaling benchmark configurations."""
+"""Generate synthetic dimension-scaling benchmark configurations."""
 
 from __future__ import annotations
 
@@ -153,7 +153,7 @@ def _rearrangement_config(dimension: int, seed: int) -> dict[str, Any]:
         "time_dependent": True,
         "vector_field_implementation": "sparse",
         "activation": "silu",
-        "use_adjoint": False,
+        "use_adjoint": True,
         "method": "dopri5",
         "rtol": 1.0e-5,
         "atol": 1.0e-6,
@@ -208,7 +208,9 @@ def _wandb_config(
         "l2",
     ]
     if is_rearranged:
-        tags.extend(["rearranged", "non-amortized", "sparse", "dopri5"])
+        tags.extend(
+            ["rearranged", "non-amortized", "sparse", "dopri5", "adjoint"]
+        )
 
     dimension_name = dimension_directory(dimension)
     return {
