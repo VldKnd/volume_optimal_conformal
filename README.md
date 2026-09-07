@@ -1,142 +1,55 @@
-# Minimal Volume Conformal Prediction
+# Minimal-Volume Conformal Prediction
 
-This repository is a modular benchmark for multivariate conformal prediction.
-The goal is to compare how different multivariate score constructions and
-calibrators affect coverage and prediction-region efficiency, especially
-region volume.
+Research code for multivariate conformal prediction with learned transport
+maps. The project trains conditional transports, conformalizes their latent
+regions, and compares coverage and log-volume on real and synthetic datasets.
+It also studies Gaussian-preserving rearrangements intended to reduce the
+volume of transported prediction regions.
 
-## Setup
+The main workflow is:
+
+```text
+dataset -> transport or regression predictor -> conformal calibration -> evaluation
+```
+
+## Setup and execution
+
+The project targets Python 3.11 and uses `uv`:
 
 ```bash
 uv sync
 export PYTHONPATH=src
+uv run python scripts/run_benchmark.py <configuration-or-folder>
 ```
 
-Python 3.11+ is expected. Sandbox notebooks live in `notebooks/sandbox/`.
-
-## Live experiment tracking
-
-Weights & Biases tracking is optional and disabled by default. Install the
-tracking dependency and authenticate once before using online mode:
+Specialized Student-t and synthetic entry points, shell wrappers, and Slurm
+submission helpers are also available in `scripts/`. Run the test suite with:
 
 ```bash
-uv sync --extra tracking
-uv run --extra tracking wandb login
+PYTHONPATH=src uv run python -m unittest discover -s tests -v
 ```
 
-Alternatively, set `WANDB_API_KEY` in the environment. Do not store API keys
-in experiment YAML files. Enable live tracking in an experiment configuration
-with:
+## Repository layout
 
-```yaml
-wandb:
-  mode: online
-  project: minimal-volume-conformal-prediction
-  entity: null
-  group: scm20d/transport_realnvp_rearranged_l2
-  name: seed_03
-  tags:
-    - scm20d
-    - realnvp
-    - dopri5
-  log_every_n_steps: 20
-  log_solver_diagnostics: true
-```
+- `src/` — reusable implementation.
+  - `configs/` and `data/` define validated configurations and dataset loaders.
+  - `predictors/`, `networks/`, and `trainers/` contain regression, transport,
+    Neural OT, flow, and rearrangement models and their optimization code.
+  - `conformal/` calibrates prediction regions; `evaluation/` provides coverage
+    and log-volume metrics; `experimentation/` runs complete experiments.
+- `benchmark/configurations/` — YAML experiment grids grouped by dataset and
+  method. `benchmark/results/` and `benchmark/downloads/` hold run artifacts and
+  downloaded results.
+- `scripts/` — configuration generators and local, shell, or Slurm benchmark
+  entry points.
+- `notebooks/` — dataset exploration, theorem illustrations, result analysis,
+  plotting, and small sandbox experiments.
+- `profiling/` — targeted numerical, runtime, and model-diagnostic studies.
+- `tests/` — unit and integration tests for datasets, transports, conformal
+  predictors, metrics, configurations, and runners.
+- `data/` — local raw datasets; `weights/` — standalone pretrained checkpoints.
+- `figures/`, `plots/`, and `logs/` — generated visual and execution artifacts.
 
-Batch metrics are sent every `log_every_n_steps`, while epoch summaries and
-final evaluation metrics are sent as soon as they are available. Base
-transport and rearrangement training use separate step axes in the same W&B
-run. Rearrangement batches also report pre-clipping gradient norm, elapsed
-batch time, ODE function evaluations and adaptive-step counts, the learned
-output `tanh` scale, and CUDA memory when available. Solver counters are
-enabled only during rearrangement training and can be disabled with
-`log_solver_diagnostics: false`. Set `mode: offline` to collect a run without
-network access for a later `wandb sync`, or leave `mode: disabled` to run
-without importing W&B. Initialization and authentication errors fail before
-training starts; a later logging-service failure emits a warning and lets the
-training run continue.
-
-The benchmark command also provides temporary overrides, so an entire folder
-can be tracked without editing its YAML files:
-
-```bash
-uv run --extra tracking python scripts/run_benchmark.py \
-  benchmark/configurations/scm20d/continuing_only_realnvp/transport_realnvp_rearranged_l2 \
-  --wandb-mode online \
-  --wandb-project minimal-volume-conformal-prediction \
-  --wandb-group scm20d/transport_realnvp_rearranged_l2 \
-  --wandb-tags scm20d realnvp rearranged
-```
-
-Command-line settings override YAML only for the current invocation. Avoid
-`--wandb-name` when selecting multiple configurations, since it deliberately
-assigns the same display name to every selected run.
-
-## Repository Structure
-
-- `src/data/datasets/`
-  Dataset interfaces and implementations. `XYData` stores `(x, y)` tensors,
-  `DatasetSplits` stores train/calibration/test splits, and `BaseDataset`
-  defines `prepare()`, `get_splits()`, `x_dim`, and `y_dim`.
-- `src/data/datasets/synthetic/`
-  Synthetic conditional datasets for experiments:
-  Gaussian, banana-shaped, and Student-t targets. They implement sampling,
-  splitting, and optional oracle densities or maps when available.
-- `src/data/loaders.py`
-  Converts `XYData` splits into PyTorch `TensorDataset` / `DataLoader` objects.
-- `src/predictors/`
-  Predictor interfaces. A predictor maps `(x, y)` to a multivariate score
-  `z in R^{y_dim}` through `multivariate_score(x, y)`.
-- `src/predictors/transport/`
-  Transport predictors with `pushforward(x, u)` and `pullback(x, y)`.
-  `FlowMatchingPredictor` uses the pullback as its multivariate score.
-- `src/trainers/`
-  Optimization logic separated from predictor definitions.
-  `FlowMatchingTrainer` fits `FlowMatchingPredictor`.
-- `src/conformal/`
-  `TransportBasedConformalPredictor` wraps a trained transport predictor,
-  constructs the configured calibrator, exposes calibrated containment checks,
-  and estimates prediction-region volume from the forward-map Jacobian.
-- `src/conformal/calibrators/`
-  Scalarization plus conformal thresholding. Current calibrators include
-  norm-based, local elliptic/Mahalanobis, and analytic Gaussian-baseline
-  calibration.
-- `src/configs/`
-  Pydantic config objects for datasets, predictors, trainers, and calibrators.
-
-## Intended Pipeline
-
-1. Build a dataset config and dataset.
-2. Call `dataset.get_splits()` to obtain train, calibration, and test data.
-3. Convert the train and calibration splits with `make_xy_dataloader(...)`.
-4. Build a predictor, for example `FlowMatchingPredictor`.
-5. Train it with the matching trainer, for example `FlowMatchingTrainer`.
-6. Wrap the trained predictor with `TransportBasedConformalPredictor`,
-   supplying a `TransportBasedConformalPredictorConfig` containing the desired
-   `coverage_mass` and calibrator config.
-7. Call `conformal_predictor.fit(calibration_dataloader)` to compute pullback
-   scores batch-by-batch and calibrate the region.
-8. Check test inclusion with
-   `conformal_predictor.contains(x_test, y_test)`.
-9. Estimate target-space region volumes, when the calibrator defines a
-   Euclidean latent ball, with `conformal_predictor.volume(x_test)`.
-10. Report coverage, region volume, and runtime.
-
-## Score And Calibration Convention
-
-Transport predictors use
-
-```python
-z = T_x^{-1}(y)
-```
-
-Residual predictors, when added, should use
-
-```python
-z = y - f(x)
-```
-
-Calibrators then map `z` to a scalar score and apply the split-conformal
-finite-sample order statistic from
-`src/conformal/calibrators/quantile.py`. Coverage is consistently expressed as
-`coverage_mass` throughout the conformal API.
+Weights & Biases tracking is optional and can be installed with
+`uv sync --extra tracking`; individual YAML configurations control whether it
+is disabled, offline, or online.
