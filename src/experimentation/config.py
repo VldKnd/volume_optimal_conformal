@@ -31,6 +31,7 @@ DatasetConfig = Annotated[
     | real_dataset_configs.SGEMMDatasetConfig
     | dataset_configs.BananaDatasetConfig
     | dataset_configs.BimodalGaussianDatasetConfig
+    | dataset_configs.EllipticalGaussianDatasetConfig
     | dataset_configs.GaussianDatasetConfig
     | dataset_configs.SinusoidalTransportDatasetConfig
     | dataset_configs.StarShapedGaussianDatasetConfig

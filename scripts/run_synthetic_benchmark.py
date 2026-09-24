@@ -34,8 +34,8 @@ def run_synthetic_benchmark(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Run banana, sinusoidal, or star-shaped synthetic benchmarks "
-            "with an analytic HDR-volume comparison."
+            "Run Gaussian, banana, sinusoidal, or star-shaped synthetic "
+            "benchmarks with an analytic HDR-volume comparison."
         )
     )
     parser.add_argument(

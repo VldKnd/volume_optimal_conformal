@@ -16,6 +16,7 @@ from experimentation.runner import ExperimentRunner
 SUPPORTED_SYNTHETIC_DATASET_TYPES = frozenset(
     {
         "banana",
+        "elliptical_gaussian_dataset",
         "sinusoidal_transport",
         "star_shaped_gaussian",
         "star_shaped",

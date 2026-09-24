@@ -284,6 +284,8 @@ class ExperimentRunner:
             self.dataset = datasets.BananaDataset(dataset_config)
         elif dataset_config.type == "bimodal_gaussian":
             self.dataset = datasets.BimodalGaussianDataset(dataset_config)
+        elif dataset_config.type == "elliptical_gaussian_dataset":
+            self.dataset = datasets.EllipticalGaussianDataset(dataset_config)
         elif dataset_config.type == "gaussian_dataset":
             self.dataset = datasets.GaussianDatasetTarget(dataset_config)
         elif dataset_config.type == "student_t_dataset":
