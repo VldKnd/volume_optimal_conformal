@@ -20,7 +20,7 @@ predictor_config:
   y_dim: 2
   hidden_dim: 128
   num_hidden_layers: 3
-  ode_steps: 100
+  ode_steps: 20
   use_hutchinson_trace_estimator: false
   seed: 2
   device: cuda
@@ -76,7 +76,7 @@ conformal_config:
     type: norm
     p: 2.0
   volume_mc_samples: 1000
-  volume_batch_size: 1024
+  volume_batch_size: 4096
   volume_n_neighbors: 100
   volume_seed: 2
 
