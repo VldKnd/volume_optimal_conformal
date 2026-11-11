@@ -214,14 +214,21 @@ class RearrangedTransportPredictor(
         self,
         x: torch.Tensor,
         u: torch.Tensor,
+        **transport_log_det_options,
     ) -> torch.Tensor:
         """
         log |det D_u (T_x o S_x)(u)|.
+
+        Keyword arguments are forwarded to the wrapped transport predictor's
+        ``log_det`` (for example flow matching's ``ode_steps`` and
+        ``use_hutchinson_trace_estimator``), so a trainer can request a
+        cheaper estimate than the evaluation default.
         """
         rearranged_u = self.rearrangement_pushforward(x=x, u=u)
         return self.transport_log_det(
             x=x,
             u=rearranged_u,
+            **transport_log_det_options,
         ) + self._rearrangement_log_det_from_pushforward(
             u=self.to_device(u),
             rearranged_u=rearranged_u,
@@ -231,10 +238,12 @@ class RearrangedTransportPredictor(
         self,
         x: torch.Tensor,
         u: torch.Tensor,
+        **transport_log_det_options,
     ) -> torch.Tensor:
         return self.transport_predictor.log_det(
             x=self.to_device(x),
             u=self.to_device(u),
+            **transport_log_det_options,
         )
 
     def rearrangement_log_det(

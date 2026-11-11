@@ -366,6 +366,72 @@ class BaseTrainer(ABC):
 
         return optimizer, scheduler
 
+    def _target_noise_scale(
+        self,
+        predictor: BasePredictor,
+        dataloader: Iterable,
+    ) -> torch.Tensor | None:
+        """Per-coordinate target scale for training-time target noise.
+
+        Returns ``None`` when ``config.target_noise_std`` is zero or absent.
+        Otherwise it is ``target_noise_std`` times the (biased) standard
+        deviation of every target coordinate over ``dataloader``, so the
+        configured value is a fraction of each target's own spread whatever
+        scaling the predictor applies internally.
+        """
+        target_noise_std = float(getattr(self.config, "target_noise_std", 0.0))
+        if target_noise_std <= 0.0:
+            return None
+
+        count = 0
+        total: torch.Tensor | None = None
+        total_squares: torch.Tensor | None = None
+        with torch.no_grad():
+            for _, y_batch in dataloader:
+                y_batch = y_batch.detach().to(device="cpu", dtype=torch.float64)
+                y_batch = y_batch.reshape(y_batch.shape[0], -1)
+                batch_total = y_batch.sum(dim=0)
+                batch_squares = y_batch.square().sum(dim=0)
+                total = batch_total if total is None else total + batch_total
+                total_squares = (
+                    batch_squares if total_squares is None else total_squares +
+                    batch_squares
+                )
+                count += y_batch.shape[0]
+
+        if count == 0 or total is None or total_squares is None:
+            raise ValueError("dataloader must contain at least one target.")
+
+        mean = total / count
+        variance = (total_squares / count - mean.square()).clamp_min(0.0)
+        scale = target_noise_std * variance.sqrt()
+        return scale.to(device=predictor.device, dtype=predictor.dtype)
+
+    def _augment_training_batch(
+        self,
+        x: torch.Tensor,
+        y: torch.Tensor,
+        target_noise_scale: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Add the configured Gaussian training noise to one batch.
+
+        Covariate noise has standard deviation ``config.covariate_noise_std``
+        per coordinate; target noise uses the per-coordinate scale returned by
+        :meth:`_target_noise_scale`. Both regularise the fitted conditional
+        density directly: the model cannot profit from conditional scales
+        below the target noise level, nor from memorising individual covariate
+        rows. Fresh noise is drawn for every batch from the global torch RNG,
+        which trainer checkpoints capture.
+        """
+        covariate_noise_std = float(getattr(self.config, "covariate_noise_std", 0.0))
+        if covariate_noise_std > 0.0:
+            x = x + covariate_noise_std * torch.randn_like(x)
+
+        if target_noise_scale is not None:
+            y = y + target_noise_scale * torch.randn_like(y)
+
+        return x, y
+
     def _fit_end_epoch(self, max_epochs: int | None) -> int:
         if max_epochs is None:
             return self.config.epochs

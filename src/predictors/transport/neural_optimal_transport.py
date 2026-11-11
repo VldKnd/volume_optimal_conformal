@@ -10,7 +10,10 @@ import torch.nn as nn
 from configs.predictors.transport.neural_optimal_transport import (
     NeuralOptimalTransportPredictorConfig,
 )
-from predictors.transport.base import BaseTransportPredictor
+from predictors.transport.base import (
+    BaseTransportPredictor,
+    checkpoint_config_on_device,
+)
 from networks.picnn import PISCNN
 from networks.standard_scaler import FrozenStandardScaler
 
@@ -488,8 +491,12 @@ class NeuralOptimalTransportPredictor(nn.Module, BaseTransportPredictor):
             weights_only=False,
         )
 
-        config = NeuralOptimalTransportPredictorConfig.model_validate(data["config"])
+        config = NeuralOptimalTransportPredictorConfig.model_validate(
+            checkpoint_config_on_device(data["config"], map_location)
+        )
         model = cls(config)
         model.load_state_dict(data["state_dict"])
+        model.to(device=model.device, dtype=model.dtype)
+        model.eval()
 
         return model

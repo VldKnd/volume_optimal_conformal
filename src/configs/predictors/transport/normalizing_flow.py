@@ -15,6 +15,12 @@ class NormalizingFlowPredictorConfig(BaseModel):
     num_hidden_layers: int = Field(default=3, ge=0)
     num_flow_layers: int = Field(default=6, gt=0)
     log_scale_bound: float = Field(default=3.0, gt=0.0)
+    # Inputs of every coupling layer's log-scale network. "x_and_u" is the
+    # standard conditional RealNVP (covariates and the masked latent
+    # dimensions); "x_only" conditions the log-scale on the covariates alone,
+    # so each layer's log-determinant is constant in the latent point while
+    # the shift network still sees the masked dimensions.
+    scale_conditioning: Literal["x_and_u", "x_only"] = "x_and_u"
 
     seed: int = 0
     device: str = "cpu"

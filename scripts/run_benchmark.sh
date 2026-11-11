@@ -52,4 +52,5 @@ exec "${PYTHON_COMMAND[@]}" \
     "${SCRIPT_DIRECTORY}/run_benchmark.py" \
     "$CONFIGURATION_PATH" \
     --priority-method neural_ot_l2 \
-    --priority-method realnvp_l2
+    --priority-method realnvp_l2 \
+    --priority-method flow_matching_l2

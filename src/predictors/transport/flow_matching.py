@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Self
 
 import torch
@@ -9,12 +10,32 @@ import torch.nn as nn
 from torchdiffeq import odeint
 
 from configs.predictors.transport.flow_matching import FlowMatchingPredictorConfig
-from predictors.transport.base import BaseTransportPredictor
+from predictors.transport.base import (
+    BaseTransportPredictor,
+    checkpoint_config_on_device,
+)
 from networks.mlp_vector_field import MLPVectorField
 from networks.standard_scaler import FrozenStandardScaler
 
 
 class FlowMatchingPredictor(nn.Module, BaseTransportPredictor):
+    """
+    Conditional flow matching transport predictor.
+
+    A learned vector field v(z, x, t) defines an ODE on t in [0, 1] that moves
+    standard Gaussian latent noise u = z_0 to scaled targets z_1. The public
+    transport map is
+
+        y = T_x(u),
+
+    where u is standard Gaussian latent noise and y is returned in the original
+    target coordinates. Internally, the flow maps u to scaled y, matching the
+    scaler convention used by the other transport predictors.
+
+    Log-determinants and conditional log densities follow from the
+    instantaneous change-of-variables formula: the divergence of the vector
+    field is integrated along the same fixed-step RK4 trajectory as the state.
+    """
 
     def __init__(self, config: FlowMatchingPredictorConfig):
         super().__init__()
@@ -65,6 +86,23 @@ class FlowMatchingPredictor(nn.Module, BaseTransportPredictor):
             device=self.device,
             dtype=self.dtype,
         )
+
+    def _ode_options(self, ode_steps: int | None) -> dict[str, float]:
+        steps = self.config.ode_steps if ode_steps is None else ode_steps
+
+        if isinstance(steps, bool) or not isinstance(steps, int) or steps < 1:
+            raise ValueError(f"ode_steps must be a positive integer, got {steps!r}.")
+
+        return {"step_size": 1.0 / steps}
+
+    @staticmethod
+    def _physical_time(
+        t_scalar: torch.Tensor,
+        reverse: bool,
+    ) -> torch.Tensor:
+        # Reverse solves run in artificial time s in [0, 1] with physical flow
+        # time t = 1 - s.
+        return 1.0 - t_scalar if reverse else t_scalar
 
     def _exact_divergence(
         self,
@@ -189,11 +227,16 @@ class FlowMatchingPredictor(nn.Module, BaseTransportPredictor):
         state: torch.Tensor,
         hutchinson_noise: torch.Tensor | None = None,
         create_graph: bool = False,
+        use_hutchinson_trace_estimator: bool | None = None,
     ) -> torch.Tensor:
         """
-        Chooses exact trace or Hutchinson trace estimator depending on config.
+        Chooses exact trace or Hutchinson trace estimator depending on config,
+        unless ``use_hutchinson_trace_estimator`` overrides it for this call.
         """
-        if self.use_hutchinson_trace_estimator:
+        if use_hutchinson_trace_estimator is None:
+            use_hutchinson_trace_estimator = self.use_hutchinson_trace_estimator
+
+        if use_hutchinson_trace_estimator:
             if hutchinson_noise is None:
                 raise ValueError(
                     "hutchinson_noise must be provided when "
@@ -232,6 +275,40 @@ class FlowMatchingPredictor(nn.Module, BaseTransportPredictor):
             self.y_scaler.running_mean
         )
 
+    def _unscale_y_log_det(self) -> torch.Tensor:
+        return 0.5 * torch.log(self.y_scaler.running_var + self.y_scaler.eps).sum()
+
+    def _scale_y_log_det(self) -> torch.Tensor:
+        return -self._unscale_y_log_det()
+
+    def _validate_condition_and_point_shapes(
+        self,
+        x: torch.Tensor,
+        point: torch.Tensor,
+    ) -> None:
+        if x.ndim != 2:
+            raise ValueError(f"Expected x to be 2D, got shape {tuple(x.shape)}.")
+
+        if point.ndim != 2:
+            raise ValueError(
+                f"Expected point to be 2D, got shape {tuple(point.shape)}."
+            )
+
+        if x.shape[-1] != self.x_dim:
+            raise ValueError(f"Expected x.shape[-1] = {self.x_dim}, got {x.shape[-1]}.")
+
+        if point.shape[-1] != self.y_dim:
+            raise ValueError(
+                f"Expected point.shape[-1] = {self.y_dim}, "
+                f"got {point.shape[-1]}."
+            )
+
+        if x.shape[0] != point.shape[0]:
+            raise ValueError(
+                f"Expected x.shape[0] == point.shape[0], got "
+                f"{x.shape[0]} and {point.shape[0]}."
+            )
+
     def predict_vector_field(
         self,
         state: torch.Tensor,
@@ -247,6 +324,137 @@ class FlowMatchingPredictor(nn.Module, BaseTransportPredictor):
             x=x,
             t=t,
         )
+
+    def _integrate(
+        self,
+        x: torch.Tensor,
+        state: torch.Tensor,
+        *,
+        reverse: bool,
+        ode_steps: int | None = None,
+    ) -> torch.Tensor:
+        """
+        Integrate the flow ODE from t = 0 to t = 1 (``reverse=False``, latent
+        to scaled target) or from t = 1 back to t = 0 (``reverse=True``, scaled
+        target to latent) with fixed-step RK4.
+        """
+        sign = -1.0 if reverse else 1.0
+
+        def dynamics(
+            t_scalar: torch.Tensor,
+            current_state: torch.Tensor,
+        ) -> torch.Tensor:
+            t = self._make_time_batch(
+                t=self._physical_time(t_scalar, reverse),
+                batch_size=current_state.shape[0],
+            )
+
+            return sign * self.vector_field(
+                state=current_state,
+                x=x,
+                t=t,
+            )
+
+        trajectory = odeint(
+            dynamics,
+            state,
+            self._ode_time_span(),
+            method="rk4",
+            options=self._ode_options(ode_steps),
+        )
+
+        return trajectory[-1]
+
+    def _integrate_with_log_det(
+        self,
+        x: torch.Tensor,
+        state: torch.Tensor,
+        *,
+        reverse: bool,
+        ode_steps: int | None = None,
+        create_graph: bool = False,
+        use_hutchinson_trace_estimator: bool | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Integrate the state together with the accumulated log-determinant
+
+            d/dt log |det D z_t| = div v(z_t, x, t).
+
+        For ``reverse=False`` the second output is log |det D_u T_x(u)| in
+        scaled coordinates. For ``reverse=True`` the ODE is solved backwards and
+        the second output is log |det D_y T_x^{-1}(y)| in scaled coordinates,
+        i.e. the negative divergence integral along the trajectory.
+
+        With ``create_graph=False`` every ODE function evaluation is detached,
+        so the solve retains no autograd graph. With ``create_graph=True`` the
+        second-order graph is kept and both outputs are differentiable with
+        respect to ``state``.
+
+        ``ode_steps`` and ``use_hutchinson_trace_estimator`` override the
+        configured values for this solve only.
+        """
+        sign = -1.0 if reverse else 1.0
+
+        if use_hutchinson_trace_estimator is None:
+            use_hutchinson_trace_estimator = self.use_hutchinson_trace_estimator
+
+        log_det = torch.zeros(
+            state.shape[0],
+            device=state.device,
+            dtype=state.dtype,
+        )
+
+        hutchinson_noise = None
+        if use_hutchinson_trace_estimator:
+            hutchinson_noise = self._sample_hutchinson_noise(state)
+
+        def augmented_dynamics(
+            t_scalar: torch.Tensor,
+            augmented_state: tuple[torch.Tensor, torch.Tensor],
+        ) -> tuple[torch.Tensor, torch.Tensor]:
+            current_state, _ = augmented_state
+
+            t = self._make_time_batch(
+                t=self._physical_time(t_scalar, reverse),
+                batch_size=current_state.shape[0],
+            )
+
+            with torch.enable_grad():
+                state_for_div = (
+                    current_state if create_graph else current_state.detach()
+                )
+                if not state_for_div.requires_grad:
+                    state_for_div = state_for_div.requires_grad_(True)
+
+                velocity = self.vector_field(
+                    state=state_for_div,
+                    x=x,
+                    t=t,
+                )
+
+                divergence = self._divergence(
+                    velocity=velocity,
+                    state=state_for_div,
+                    hutchinson_noise=hutchinson_noise,
+                    create_graph=create_graph,
+                    use_hutchinson_trace_estimator=use_hutchinson_trace_estimator,
+                )
+
+            if not create_graph:
+                velocity = velocity.detach()
+                divergence = divergence.detach()
+
+            return sign * velocity, sign * divergence
+
+        state_trajectory, log_det_trajectory = odeint(
+            augmented_dynamics,
+            (state, log_det),
+            self._ode_time_span(),
+            method="rk4",
+            options=self._ode_options(ode_steps),
+        )
+
+        return state_trajectory[-1], log_det_trajectory[-1]
 
     @torch.no_grad()
     def pushforward(
@@ -271,36 +479,16 @@ class FlowMatchingPredictor(nn.Module, BaseTransportPredictor):
 
         x = self.to_device(x)
         state = self.to_device(u)
+        self._validate_condition_and_point_shapes(x=x, point=state)
 
-        steps = self.config.ode_steps if ode_steps is None else ode_steps
-        time_span = self._ode_time_span()
-
-        def dynamics(
-            t_scalar: torch.Tensor,
-            state: torch.Tensor,
-        ) -> torch.Tensor:
-            t = self._make_time_batch(
-                t=t_scalar,
-                batch_size=state.shape[0],
-            )
-
-            return self.predict_vector_field(
-                state=state,
-                x=x,
-                t=t,
-            )
-
-        trajectory = odeint(
-            dynamics,
-            state,
-            time_span,
-            method="rk4",
-            options={"step_size": 1.0 / steps},
+        y_scaled = self._integrate(
+            x=x,
+            state=state,
+            reverse=False,
+            ode_steps=ode_steps,
         )
 
-        state = trajectory[-1]
-
-        return self.unscale_y(state).detach()
+        return self.unscale_y(y_scaled).detach()
 
     @torch.no_grad()
     def pushforward_with_log_det(
@@ -312,173 +500,30 @@ class FlowMatchingPredictor(nn.Module, BaseTransportPredictor):
         """
         Push latent u to observation space and compute the forward log-det.
 
-            y = T_x(u)
-
         Returns:
 
             y:       (batch, y_dim)
             log_det: (batch,)
 
-        The returned log_det is
-
-            log |det D_u T_x(u)|.
-
-        Since pushforward returns unscaled y, this includes the final
-        diagonal Jacobian contribution from unscale_y.
+        The returned log_det is log |det D_u T_x(u)| for the public unscaled
+        map, so it includes the diagonal Jacobian contribution of unscale_y.
         """
         self.eval()
 
         x = self.to_device(x)
         state = self.to_device(u)
+        self._validate_condition_and_point_shapes(x=x, point=state)
 
-        steps = self.config.ode_steps if ode_steps is None else ode_steps
-        time_span = self._ode_time_span()
-
-        log_det = torch.zeros(
-            state.shape[0],
-            device=self.device,
-            dtype=self.dtype,
-        )
-
-        hutchinson_noise = None
-        if self.use_hutchinson_trace_estimator:
-            hutchinson_noise = self._sample_hutchinson_noise(state)
-
-        def augmented_dynamics(
-            t_scalar: torch.Tensor,
-            augmented_state: tuple[torch.Tensor, torch.Tensor],
-        ) -> tuple[torch.Tensor, torch.Tensor]:
-            state, log_det = augmented_state
-
-            t = self._make_time_batch(
-                t=t_scalar,
-                batch_size=state.shape[0],
-            )
-
-            with torch.enable_grad():
-                state_for_div = state.detach().requires_grad_(True)
-
-                velocity = self.vector_field(
-                    state=state_for_div,
-                    x=x,
-                    t=t,
-                )
-
-                divergence = self._divergence(
-                    velocity=velocity,
-                    state=state_for_div,
-                    hutchinson_noise=hutchinson_noise,
-                )
-
-            return velocity.detach(), divergence.detach()
-
-        state_trajectory, log_det_trajectory = odeint(
-            augmented_dynamics,
-            (state, log_det),
-            time_span,
-            method="rk4",
-            options={"step_size": 1.0 / steps},
-        )
-
-        state = state_trajectory[-1]
-        log_det = log_det_trajectory[-1]
-
-        # Log-det contribution of unscale_y:
-        #
-        #   y = y_scaled * sqrt(running_var + eps) + running_mean
-        #
-        # Therefore:
-        #
-        #   log |det D unscale_y|
-        #       = sum_j log sqrt(running_var_j + eps)
-        #       = 0.5 * sum_j log(running_var_j + eps)
-        scaler_log_det = 0.5 * torch.log(self.y_scaler.running_var +
-                                         self.y_scaler.eps).sum()
-
-        log_det = log_det + scaler_log_det
-
-        y = self.unscale_y(state)
-
-        return y.detach(), log_det.detach()
-
-    @torch.enable_grad()
-    def _differentiable_pushforward_with_log_det(
-        self,
-        x: torch.Tensor,
-        u: torch.Tensor,
-        ode_steps: int | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        self.eval()
-
-        x = self.to_device(x)
-        state = self.to_device(u)
-
-        steps = self.config.ode_steps if ode_steps is None else ode_steps
-        time_span = self._ode_time_span()
-
-        log_det = torch.zeros(
-            state.shape[0],
-            device=self.device,
-            dtype=self.dtype,
-        )
-
-        hutchinson_noise = None
-        if self.use_hutchinson_trace_estimator:
-            hutchinson_noise = self._sample_hutchinson_noise(state)
-
-        def augmented_dynamics(
-            t_scalar: torch.Tensor,
-            augmented_state: tuple[torch.Tensor, torch.Tensor],
-        ) -> tuple[torch.Tensor, torch.Tensor]:
-            state, log_det = augmented_state
-
-            t = self._make_time_batch(
-                t=t_scalar,
-                batch_size=state.shape[0],
-            )
-
-            state = state.requires_grad_(True)
-            velocity = self.vector_field(
-                state=state,
-                x=x,
-                t=t,
-            )
-            divergence = self._divergence(
-                velocity=velocity,
-                state=state,
-                hutchinson_noise=hutchinson_noise,
-                create_graph=True,
-            )
-
-            return velocity, divergence
-
-        state_trajectory, log_det_trajectory = odeint(
-            augmented_dynamics,
-            (state, log_det),
-            time_span,
-            method="rk4",
-            options={"step_size": 1.0 / steps},
-        )
-
-        state = state_trajectory[-1]
-        log_det = log_det_trajectory[-1]
-        scaler_log_det = 0.5 * torch.log(self.y_scaler.running_var +
-                                         self.y_scaler.eps).sum()
-
-        return self.unscale_y(state), log_det + scaler_log_det
-
-    def log_det(
-        self,
-        x: torch.Tensor,
-        u: torch.Tensor,
-        ode_steps: int | None = None,
-    ) -> torch.Tensor:
-        _, log_det = self._differentiable_pushforward_with_log_det(
+        y_scaled, log_det = self._integrate_with_log_det(
             x=x,
-            u=u,
+            state=state,
+            reverse=False,
             ode_steps=ode_steps,
+            create_graph=False,
         )
-        return log_det
+        y = self.unscale_y(y_scaled)
+
+        return y.detach(), (log_det + self._unscale_y_log_det()).detach()
 
     @torch.no_grad()
     def pullback(
@@ -502,42 +547,136 @@ class FlowMatchingPredictor(nn.Module, BaseTransportPredictor):
         self.eval()
 
         x = self.to_device(x)
-        state = self.scale_y(self.to_device(y))
+        y = self.to_device(y)
+        self._validate_condition_and_point_shapes(x=x, point=y)
 
-        steps = self.config.ode_steps if ode_steps is None else ode_steps
-        time_span = self._ode_time_span()
-
-        def reverse_dynamics(
-            s_scalar: torch.Tensor,
-            state: torch.Tensor,
-        ) -> torch.Tensor:
-            # Artificial time s in [0, 1], physical flow time t = 1 - s.
-            t_scalar = 1.0 - s_scalar
-
-            t = self._make_time_batch(
-                t=t_scalar,
-                batch_size=state.shape[0],
-            )
-
-            velocity = self.predict_vector_field(
-                state=state,
-                x=x,
-                t=t,
-            )
-
-            return -velocity
-
-        trajectory = odeint(
-            reverse_dynamics,
-            state,
-            time_span,
-            method="rk4",
-            options={"step_size": 1.0 / steps},
+        u = self._integrate(
+            x=x,
+            state=self.scale_y(y),
+            reverse=True,
+            ode_steps=ode_steps,
         )
 
-        state = trajectory[-1]
+        return u.detach()
 
-        return state.detach()
+    @torch.no_grad()
+    def pullback_with_log_det(
+        self,
+        x: torch.Tensor,
+        y: torch.Tensor,
+        ode_steps: int | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Pull observation y back to latent space and compute the inverse log-det.
+
+        Returns:
+
+            u:       (batch, y_dim)
+            log_det: (batch,)
+
+        The returned log_det is log |det D_y T_x^{-1}(y)| for the public map,
+        so it includes the diagonal Jacobian contribution of scale_y.
+        """
+        self.eval()
+
+        x = self.to_device(x)
+        y = self.to_device(y)
+        self._validate_condition_and_point_shapes(x=x, point=y)
+
+        u, log_det = self._integrate_with_log_det(
+            x=x,
+            state=self.scale_y(y),
+            reverse=True,
+            ode_steps=ode_steps,
+            create_graph=False,
+        )
+
+        return u.detach(), (log_det + self._scale_y_log_det()).detach()
+
+    def log_det(
+        self,
+        x: torch.Tensor,
+        u: torch.Tensor,
+        ode_steps: int | None = None,
+        use_hutchinson_trace_estimator: bool | None = None,
+    ) -> torch.Tensor:
+        """
+        Return log |det D_u T_x(u)| for the public unscaled pushforward map.
+
+        When ``u`` requires gradients and grad mode is enabled, the result stays
+        differentiable with respect to ``u``; the rearrangement trainers rely
+        on this. Otherwise the ODE solve retains no graph and the result is
+        detached, matching the other transport predictors.
+
+        ``ode_steps`` and ``use_hutchinson_trace_estimator`` override the
+        configured solver and divergence estimator for this call only. The
+        rearrangement trainers use them for a cheaper differentiable estimate
+        during training while evaluation keeps the configured exact solve.
+        """
+        differentiable = torch.is_grad_enabled() and u.requires_grad
+
+        self.eval()
+
+        x = self.to_device(x)
+        state = self.to_device(u)
+        self._validate_condition_and_point_shapes(x=x, point=state)
+
+        with torch.set_grad_enabled(differentiable):
+            _, log_det = self._integrate_with_log_det(
+                x=x,
+                state=state,
+                reverse=False,
+                ode_steps=ode_steps,
+                create_graph=differentiable,
+                use_hutchinson_trace_estimator=use_hutchinson_trace_estimator,
+            )
+            log_det = log_det + self._unscale_y_log_det()
+
+        return log_det if differentiable else log_det.detach()
+
+    def log_prob(
+        self,
+        x: torch.Tensor,
+        y: torch.Tensor,
+        ode_steps: int | None = None,
+    ) -> torch.Tensor:
+        """
+        Conditional log density log p(y | x) under the flow ODE.
+
+        The observation is pulled back to the latent u along the reverse ODE
+        while the negative divergence of the vector field is accumulated, and
+        the standard Gaussian base density is added. With the exact divergence
+        this is the log density of the learned flow up to ODE discretisation
+        error; with the Hutchinson estimator the log-determinant term is an
+        unbiased estimate.
+
+        Gradient handling mirrors :meth:`log_det`: the result is differentiable
+        with respect to ``y`` only when ``y`` requires gradients and grad mode
+        is enabled.
+        """
+        differentiable = torch.is_grad_enabled() and y.requires_grad
+
+        self.eval()
+
+        x = self.to_device(x)
+        y = self.to_device(y)
+        self._validate_condition_and_point_shapes(x=x, point=y)
+
+        with torch.set_grad_enabled(differentiable):
+            u, inverse_log_det = self._integrate_with_log_det(
+                x=x,
+                state=self.scale_y(y),
+                reverse=True,
+                ode_steps=ode_steps,
+                create_graph=differentiable,
+            )
+            inverse_log_det = inverse_log_det + self._scale_y_log_det()
+
+            base_log_prob = (-0.5 * u.square() -
+                             0.5 * math.log(2.0 * math.pi)).sum(dim=-1)
+            log_prob = base_log_prob + inverse_log_det
+
+        return log_prob if differentiable else log_prob.detach()
 
     def multivariate_score(
         self,
@@ -598,9 +737,12 @@ class FlowMatchingPredictor(nn.Module, BaseTransportPredictor):
     ) -> Self:
         data = torch.load(path, map_location=map_location, weights_only=False)
 
-        config = FlowMatchingPredictorConfig.model_validate(data["config"])
+        config = FlowMatchingPredictorConfig.model_validate(
+            checkpoint_config_on_device(data["config"], map_location)
+        )
         model = cls(config)
         model.load_state_dict(data["state_dict"])
         model.to(device=model.device, dtype=model.dtype)
+        model.eval()
 
         return model

@@ -52,6 +52,8 @@ class NeuralSplineFlowTrainer(BaseTrainer):
             predictor=predictor,
         )
 
+        target_noise_scale = self._target_noise_scale(predictor, dataloader)
+
         progress = trange(
             self.completed_epochs,
             end_epoch,
@@ -66,6 +68,11 @@ class NeuralSplineFlowTrainer(BaseTrainer):
             for x_batch, y_batch in dataloader:
                 x_batch = predictor.to_device(x_batch)
                 y_batch = predictor.to_device(y_batch)
+                x_batch, y_batch = self._augment_training_batch(
+                    x_batch,
+                    y_batch,
+                    target_noise_scale,
+                )
 
                 log_prob = predictor.log_prob(x=x_batch, y=y_batch)
                 loss = -log_prob.mean()

@@ -234,6 +234,7 @@ class RearrangedTransportTrainer(BaseTrainer):
         weights = predictor.log_det(
             x=x,
             u=u,
+            **self.config.transport_log_det_options,
         )
 
         return self._grouped_log_mean_exp(
@@ -267,6 +268,7 @@ class RearrangedTransportTrainer(BaseTrainer):
         weights = predictor.log_det(
             x=x,
             u=u,
+            **self.config.transport_log_det_options,
         )
         return self._grouped_mean(
             weights=weights,

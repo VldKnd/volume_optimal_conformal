@@ -1,5 +1,7 @@
 # src/configs/trainers/rearranged_transport/dense.py
 
+from typing import Any
+
 from pydantic import AliasChoices, BaseModel, Field
 
 
@@ -8,6 +10,11 @@ class RearrangedTransportTrainerConfig(BaseModel):
 
     mc_samples_per_x: int = Field(default=1, gt=0)
     train_transport_map: bool = False
+    # Keyword arguments forwarded to the wrapped transport predictor's
+    # ``log_det`` during rearrangement training only, for example
+    # ``{"ode_steps": 20, "use_hutchinson_trace_estimator": true}`` for a
+    # flow matching base; evaluation keeps the predictor's configured solve.
+    transport_log_det_options: dict[str, Any] = Field(default_factory=dict)
 
     learning_rate: float = Field(default=1e-3, gt=0.0)
     weight_decay: float = Field(default=1e-4, ge=0.0)

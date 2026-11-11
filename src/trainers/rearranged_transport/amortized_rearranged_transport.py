@@ -113,6 +113,7 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
             x=x,
             u=u,
             coverage_mass=coverage_mass,
+            **self.config.transport_log_det_options,
         )
 
         return self._grouped_log_mean_exp(
@@ -150,6 +151,7 @@ class AmortizedRearrangedTransportTrainer(RearrangedTransportTrainer):
             x=x,
             u=u,
             coverage_mass=coverage_mass,
+            **self.config.transport_log_det_options,
         )
         return self._grouped_mean(
             weights=weights,

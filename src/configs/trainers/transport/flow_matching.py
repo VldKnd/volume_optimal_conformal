@@ -1,4 +1,4 @@
-# src/configs/trainers/flow_matching.py
+# src/configs/trainers/transport/flow_matching.py
 
 from pydantic import BaseModel, Field
 
@@ -6,16 +6,17 @@ from pydantic import BaseModel, Field
 class FlowMatchingTrainerConfig(BaseModel):
     epochs: int = Field(default=100, gt=0)
 
-    batch_size: int = 256
-
     learning_rate: float = Field(default=1e-3, gt=0.0)
     weight_decay: float = Field(default=1e-4, ge=0.0)
 
-    grad_clip_norm: float = 1.0
+    grad_clip_norm: float = Field(default=1.0, gt=0.0)
+
+    # Training-time Gaussian noise regularisation; 0 disables it. Covariate
+    # noise is in the units of the covariates (the real datasets standardise
+    # them), target noise in units of each target's standard deviation over
+    # the training loader. Nothing is added at calibration or test time.
+    covariate_noise_std: float = Field(default=0.0, ge=0.0)
+    target_noise_std: float = Field(default=0.0, ge=0.0)
 
     use_cosine_scheduler: bool = True
-
-    num_workers: int = 0
-    pin_memory: bool = False
-
     verbose: bool = True

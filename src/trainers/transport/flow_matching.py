@@ -1,4 +1,4 @@
-# src/trainers/flow_matching.py
+# src/trainers/transport/flow_matching.py
 
 import time
 
@@ -11,6 +11,8 @@ from trainers.base import BaseTrainer
 
 
 class FlowMatchingTrainer(BaseTrainer):
+    """Conditional flow matching trainer with linear interpolation paths."""
+
     config_class = FlowMatchingTrainerConfig
     trainer_type = "flow_matching_trainer"
 
@@ -27,7 +29,7 @@ class FlowMatchingTrainer(BaseTrainer):
         max_epochs: int | None = None,
     ) -> FlowMatchingPredictor:
         end_epoch = self._fit_end_epoch(max_epochs)
-        if self.completed_epochs >= end_epoch:
+        if end_epoch <= self.completed_epochs:
             predictor.eval()
             return predictor
 
@@ -48,6 +50,8 @@ class FlowMatchingTrainer(BaseTrainer):
             predictor=predictor,
         )
 
+        target_noise_scale = self._target_noise_scale(predictor, dataloader)
+
         progress = trange(
             self.completed_epochs,
             end_epoch,
@@ -56,14 +60,17 @@ class FlowMatchingTrainer(BaseTrainer):
         )
 
         for epoch in progress:
-
             start = time.perf_counter()
-            epoch_losses = []
+            epoch_losses: list[float] = []
 
             for x_batch, y_batch in dataloader:
-
                 x_batch = predictor.to_device(x_batch)
                 y_batch = predictor.to_device(y_batch)
+                x_batch, y_batch = self._augment_training_batch(
+                    x_batch,
+                    y_batch,
+                    target_noise_scale,
+                )
 
                 y_scaled = predictor.scale_y(y_batch)
                 u = torch.randn_like(y_scaled)
@@ -84,14 +91,17 @@ class FlowMatchingTrainer(BaseTrainer):
                     t=t,
                 )
 
-                loss = ((prediction - target_velocity).square().sum(dim=-1).mean())
+                loss = (prediction - target_velocity).square().sum(dim=-1).mean()
+
+                if not torch.isfinite(loss):
+                    raise FloatingPointError("Non-finite flow matching loss.")
 
                 optimizer.zero_grad()
                 loss.backward()
 
                 gradient_norm = torch.nn.utils.clip_grad_norm_(
-                    predictor.parameters(),
-                    self.config.grad_clip_norm,
+                    predictor.vector_field.parameters(),
+                    max_norm=self.config.grad_clip_norm,
                 )
 
                 optimizer.step()
@@ -100,7 +110,7 @@ class FlowMatchingTrainer(BaseTrainer):
                 if scheduler is not None:
                     scheduler.step()
 
-                loss_value = loss.item()
+                loss_value = float(loss.detach().cpu())
                 epoch_losses.append(loss_value)
                 self._record_batch(
                     {
@@ -124,7 +134,7 @@ class FlowMatchingTrainer(BaseTrainer):
             )
 
             if self.config.verbose:
-                progress.set_description(f"Epoch {epoch+1} | Loss {epoch_loss:.4f}")
+                progress.set_description(f"Epoch {epoch + 1} | Loss {epoch_loss:.4f}")
 
         predictor.eval()
 

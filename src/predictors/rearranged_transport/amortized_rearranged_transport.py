@@ -154,8 +154,13 @@ class AmortizedRearrangedTransport(RearrangedTransportPredictor):
         x: torch.Tensor,
         u: torch.Tensor,
         coverage_mass: torch.Tensor | float,
+        **transport_log_det_options,
     ) -> torch.Tensor:
-        """Return ``log |det D_u (T_x o S_{x, coverage_mass})(u)|``."""
+        """Return ``log |det D_u (T_x o S_{x, coverage_mass})(u)|``.
+
+        Keyword arguments are forwarded to the wrapped transport predictor's
+        ``log_det`` as in :meth:`RearrangedTransportPredictor.log_det`.
+        """
         rearranged_u = self.rearrangement_pushforward(
             x=x,
             u=u,
@@ -164,6 +169,7 @@ class AmortizedRearrangedTransport(RearrangedTransportPredictor):
         return self.transport_log_det(
             x=x,
             u=rearranged_u,
+            **transport_log_det_options,
         ) + self._rearrangement_log_det_from_pushforward(
             u=self.to_device(u),
             rearranged_u=rearranged_u,

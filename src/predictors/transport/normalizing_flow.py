@@ -11,7 +11,10 @@ import torch.nn as nn
 from configs.predictors.transport.normalizing_flow import (
     NormalizingFlowPredictorConfig,
 )
-from predictors.transport.base import BaseTransportPredictor
+from predictors.transport.base import (
+    BaseTransportPredictor,
+    checkpoint_config_on_device,
+)
 from networks.standard_scaler import FrozenStandardScaler
 
 
@@ -41,7 +44,10 @@ class _AffineCouplingLayer(nn.Module):
     Conditional RealNVP affine coupling layer.
 
     The mask dimensions are left unchanged and condition the shift/log-scale
-    network for the remaining dimensions.
+    network for the remaining dimensions. With ``scale_conditioning="x_only"``
+    the log-scale network sees the covariates only, so the layer's
+    log-determinant does not depend on the latent point; the shift network
+    still sees the masked dimensions.
     """
 
     def __init__(
@@ -53,33 +59,61 @@ class _AffineCouplingLayer(nn.Module):
         hidden_dim: int,
         num_hidden_layers: int,
         log_scale_bound: float,
+        scale_conditioning: str = "x_and_u",
     ):
         super().__init__()
 
         self.y_dim = y_dim
         self.log_scale_bound = float(log_scale_bound)
+        self.scale_conditioning = scale_conditioning
 
         self.register_buffer("mask", mask.bool())
         self.register_buffer("transform_mask", ~mask.bool())
 
         self.num_transformed = int(self.transform_mask.sum().item())
 
-        self.conditioner = _build_mlp(
-            input_dim=x_dim + y_dim,
-            output_dim=2 * self.num_transformed,
-            hidden_dim=hidden_dim,
-            num_hidden_layers=num_hidden_layers,
-        )
+        if scale_conditioning == "x_and_u":
+            self.conditioner = _build_mlp(
+                input_dim=x_dim + y_dim,
+                output_dim=2 * self.num_transformed,
+                hidden_dim=hidden_dim,
+                num_hidden_layers=num_hidden_layers,
+            )
+            self.scale_conditioner: nn.Sequential | None = None
+        elif scale_conditioning == "x_only":
+            if x_dim < 1:
+                raise ValueError("scale_conditioning='x_only' requires x_dim >= 1.")
+            self.conditioner = _build_mlp(
+                input_dim=x_dim + y_dim,
+                output_dim=self.num_transformed,
+                hidden_dim=hidden_dim,
+                num_hidden_layers=num_hidden_layers,
+            )
+            self.scale_conditioner = _build_mlp(
+                input_dim=x_dim,
+                output_dim=self.num_transformed,
+                hidden_dim=hidden_dim,
+                num_hidden_layers=num_hidden_layers,
+            )
+        else:
+            raise ValueError(
+                f"Unknown scale_conditioning={scale_conditioning!r}; expected "
+                "'x_and_u' or 'x_only'."
+            )
         self._initialize_as_identity()
 
     def _initialize_as_identity(self) -> None:
-        final_layer = self.conditioner[-1]
-        if not isinstance(final_layer, nn.Linear):
-            return
+        for network in (self.conditioner, self.scale_conditioner):
+            if network is None:
+                continue
 
-        with torch.no_grad():
-            final_layer.weight.zero_()
-            final_layer.bias.zero_()
+            final_layer = network[-1]
+            if not isinstance(final_layer, nn.Linear):
+                continue
+
+            with torch.no_grad():
+                final_layer.weight.zero_()
+                final_layer.bias.zero_()
 
     def _shift_and_log_scale(
         self,
@@ -93,13 +127,19 @@ class _AffineCouplingLayer(nn.Module):
             ],
             dim=-1,
         )
-        raw_params = self.conditioner(conditioner_input).view(
-            inputs.shape[0],
-            self.num_transformed,
-            2,
-        )
-        shift = raw_params[..., 0]
-        log_scale = self.log_scale_bound * torch.tanh(raw_params[..., 1])
+        if self.scale_conditioner is None:
+            raw_params = self.conditioner(conditioner_input).view(
+                inputs.shape[0],
+                self.num_transformed,
+                2,
+            )
+            shift = raw_params[..., 0]
+            raw_log_scale = raw_params[..., 1]
+        else:
+            shift = self.conditioner(conditioner_input)
+            raw_log_scale = self.scale_conditioner(x)
+
+        log_scale = self.log_scale_bound * torch.tanh(raw_log_scale)
 
         return shift, log_scale
 
@@ -165,6 +205,7 @@ class NormalizingFlowPredictor(nn.Module, BaseTransportPredictor):
                     hidden_dim=config.hidden_dim,
                     num_hidden_layers=config.num_hidden_layers,
                     log_scale_bound=config.log_scale_bound,
+                    scale_conditioning=config.scale_conditioning,
                 ) for layer_idx in range(config.num_flow_layers)
             ]
         ).to(device=self.device, dtype=self.dtype)
@@ -420,9 +461,9 @@ class NormalizingFlowPredictor(nn.Module, BaseTransportPredictor):
     ) -> Self:
         data = torch.load(path, map_location=map_location, weights_only=False)
 
-        config_data = dict(data["config"])
-        config_data["device"] = str(torch.device(map_location))
-        config = NormalizingFlowPredictorConfig.model_validate(config_data)
+        config = NormalizingFlowPredictorConfig.model_validate(
+            checkpoint_config_on_device(data["config"], map_location)
+        )
         model = cls(config)
         model.load_state_dict(data["state_dict"])
         model.to(device=model.device, dtype=model.dtype)

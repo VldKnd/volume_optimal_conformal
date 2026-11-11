@@ -12,7 +12,10 @@ import torch.nn.functional as F
 from configs.predictors.transport.neural_spline_flow import (
     NeuralSplineFlowPredictorConfig,
 )
-from predictors.transport.base import BaseTransportPredictor
+from predictors.transport.base import (
+    BaseTransportPredictor,
+    checkpoint_config_on_device,
+)
 from networks.standard_scaler import FrozenStandardScaler
 
 
@@ -618,9 +621,12 @@ class NeuralSplineFlowPredictor(nn.Module, BaseTransportPredictor):
     ) -> Self:
         data = torch.load(path, map_location=map_location, weights_only=False)
 
-        config = NeuralSplineFlowPredictorConfig.model_validate(data["config"])
+        config = NeuralSplineFlowPredictorConfig.model_validate(
+            checkpoint_config_on_device(data["config"], map_location)
+        )
         model = cls(config)
         model.load_state_dict(data["state_dict"])
         model.to(device=model.device, dtype=model.dtype)
+        model.eval()
 
         return model

@@ -11,7 +11,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 CONFIGURATION_ROOT = REPOSITORY_ROOT / "benchmark/configurations/gaussian"
 
 K_VALUES = (1, 2, 4, 8, 16, 32)
-Y_DIMS = (2, 4, 8, 16, 32)
+Y_DIMS = (16, 32)
 SEEDS = range(5)
 FAMILY = "transport_neural_ot_l2"
 
