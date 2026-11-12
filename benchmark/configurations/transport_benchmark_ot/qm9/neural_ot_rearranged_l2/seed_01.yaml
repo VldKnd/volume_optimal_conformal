@@ -62,6 +62,9 @@ rearrangement_trainer_config:
   epochs: 100
   mc_samples_per_x: 32
   train_transport_map: false
+  coverage_mass_range:
+    - 0.0
+    - 1.0
   learning_rate: 0.001
   weight_decay: 0.0001
   grad_clip_norm: 1.0

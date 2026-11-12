@@ -99,6 +99,7 @@ class RearrangedTransportTrainer(BaseTrainer):
                 coverage_masses = self._sample_coverage_masses(
                     predictor=predictor,
                     batch_size=x_batch.shape[0],
+                    coverage_mass_range=self.config.coverage_mass_range,
                 )
                 radii = self._ball_radii(
                     coverage_masses=coverage_masses,
@@ -331,15 +332,31 @@ class RearrangedTransportTrainer(BaseTrainer):
     def _sample_coverage_masses(
         predictor: RearrangedTransportPredictor,
         batch_size: int,
+        coverage_mass_range: tuple[float, float] = (0.0, 1.0),
     ) -> torch.Tensor:
+        """One coverage mass per covariate, uniform on the configured range.
+
+        The range is clipped away from 0 and 1 so that every ball has a
+        finite positive radius; a degenerate range yields the same mass for
+        every covariate (training at a single level).
+        """
         if batch_size < 1:
             raise ValueError("batch_size must be positive.")
         epsilon = torch.finfo(predictor.dtype).eps
-        return torch.empty(
+        low = max(float(coverage_mass_range[0]), epsilon)
+        high = min(float(coverage_mass_range[1]), 1.0 - epsilon)
+        if low > high:
+            raise ValueError(
+                f"Invalid coverage_mass_range {tuple(coverage_mass_range)!r}."
+            )
+        masses = torch.empty(
             batch_size,
             device=predictor.device,
             dtype=predictor.dtype,
-        ).uniform_(epsilon, 1.0 - epsilon)
+        )
+        if low == high:
+            return masses.fill_(low)
+        return masses.uniform_(low, high)
 
     @staticmethod
     def _ball_radii(
