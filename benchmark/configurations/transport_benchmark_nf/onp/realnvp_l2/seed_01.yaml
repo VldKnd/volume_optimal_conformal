@@ -22,7 +22,7 @@ predictor_config:
   num_hidden_layers: 4
   num_flow_layers: 4
   log_scale_bound: 3.0
-  scale_conditioning: x_only
+  scale_conditioning: x_and_u
   seed: 1
   device: cuda
   dtype: float32
@@ -32,7 +32,7 @@ trainer_config:
   learning_rate: 0.001
   weight_decay: 0.0001
   grad_clip_norm: 10.0
-  covariate_noise_std: 0.2
+  covariate_noise_std: 0.0
   target_noise_std: 0.1
   use_cosine_scheduler: true
   verbose: true
